@@ -22,6 +22,8 @@ import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.SeekBar
+import android.app.AlertDialog
 import android.inputmethodservice.InputMethodService
 
 class EasyKeyboardService : InputMethodService() {
@@ -33,10 +35,17 @@ class EasyKeyboardService : InputMethodService() {
     private val redoStack = mutableListOf<String>()
     private val handler = Handler(Looper.getMainLooper())
     private val repeatTasks = mutableMapOf<View, Runnable>()
+    private var keyboardScale = 1.0f
+    private var buttonColor = Color.rgb(247, 249, 252)
+    private var buttonTextColor = Color.rgb(25, 35, 75)
 
     override fun onCreateInputView(): View = buildKeyboard()
 
     private fun buildKeyboard(): View {
+        val appearance = getSharedPreferences("appearance", Context.MODE_PRIVATE)
+        keyboardScale = appearance.getFloat("scale", 1.0f).coerceIn(0.75f, 1.25f)
+        buttonColor = appearance.getInt("button_color", Color.rgb(247, 249, 252))
+        buttonTextColor = appearance.getInt("text_color", Color.rgb(25, 35, 75))
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(2), dp(2), dp(2), dp(2))
@@ -48,11 +57,18 @@ class EasyKeyboardService : InputMethodService() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val defaults = listOf("نه", "بله", "چرا", "این", "در", "که", "زیرا", "و", "بلکه", "همه", "یک", "اینجا", "موارد")
         val suggestionPrefs = getSharedPreferences("suggestions", Context.MODE_PRIVATE)
         val stored = suggestionPrefs.getStringSet("items", emptySet())?.toList().orEmpty()
-        val hiddenDefaults = suggestionPrefs.getStringSet("hidden_defaults", emptySet()) ?: emptySet()
-        val saved = (defaults.filterNot { it in hiddenDefaults } + stored).distinct()
+        val beforeCursor = currentInputConnection?.getTextBeforeCursor(80, 0)?.toString().orEmpty()
+        val currentToken = beforeCursor.substringAfterLast(' ').substringAfterLast('\\n')
+        val dictionary = listOf(
+            "نه", "بله", "چرا", "این", "در", "که", "زیرا", "و", "بلکه", "همه", "یک", "اینجا", "موارد",
+            "من", "تو", "ما", "شما", "آنها", "برای", "با", "از", "به", "اما", "اگر", "چون", "بسیار",
+            "سلام", "خوب", "ممنون", "لطفاً", "می‌شود", "هست", "نیست", "دارم", "دارید"
+        )
+        val dynamicDefaults = if (currentToken.isBlank()) emptyList()
+            else dictionary.filter { it.startsWith(currentToken) && it != currentToken }.take(6)
+        val saved = (dynamicDefaults + stored.filter { currentToken.isBlank() || it.startsWith(currentToken) }).distinct()
         val suggestionScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(suggestions)
@@ -63,6 +79,8 @@ class EasyKeyboardService : InputMethodService() {
                 removeSuggestion(word)
                 true
             }
+            suggestionButton.minWidth = dp(52)
+            suggestionButton.maxWidth = dp(260)
             suggestions.addView(suggestionButton, LinearLayout.LayoutParams(-2, dp(34)))
         }
         outer.addView(suggestionScroll, LinearLayout.LayoutParams(-1, dp(38)))
@@ -74,14 +92,14 @@ class EasyKeyboardService : InputMethodService() {
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-        listOf("Select", "Setup", "Save Suggestion", "Export List").forEach { label ->
+        listOf("Select", "Setup", "Save Suggestion").forEach { label ->
             val action = when (label) {
                 "Save Suggestion" -> ({ saveSuggestion() })
-                "Export List" -> ({ exportSuggestions() })
-                else -> ({ /* Action to be configured */ })
+                "Select" -> ({ selectText() })
+                else -> ({ showSetup() })
             }
             val button = key(label, true, action)
-            val width = when (label) { "Save Suggestion" -> dp(112); "Export List" -> dp(92); else -> dp(76) }
+            val width = when (label) { "Save Suggestion" -> dp(112); else -> dp(76) }
             actionRow.addView(button, LinearLayout.LayoutParams(width, dp(48)))
         }
         actionRowScroll.addView(actionRow)
@@ -91,7 +109,7 @@ class EasyKeyboardService : InputMethodService() {
             isHorizontalScrollBarEnabled = false
         }
         val toolbar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val toolbarKeys = listOf("«", "»", "−", "_", "Undo", "Redo", "Past", "Copy", "File", "Answer")
+        val toolbarKeys = listOf("«", "»", "−", "_", "Undo", "Redo", "Past", "Copy", "Emoji", "اعراب", "Symbols", "File", "Answer")
         toolbarKeys.forEach { label ->
             val b = key(label, true) {
                 when (label) {
@@ -101,6 +119,9 @@ class EasyKeyboardService : InputMethodService() {
                     "Copy" -> copySelection()
                     "Save Suggestion" -> saveSuggestion()
                     "Export List" -> exportSuggestions()
+                    "Emoji" -> showGrid("Emoji", listOf("😀","😁","😂","🤣","😊","😍","😘","😎","😭","😡","👍","👎","👏","🙏","❤️","💙","🔥","🌹","🎉","✅","❌","⭐","☀️","🌙"), 6)
+                    "اعراب" -> showGrid("اعراب", listOf("َ","ِ","ُ","ً","ٍ","ٌ","ْ","ّ","ٰ","ٓ","ٔ","ٕ"), 6)
+                    "Symbols" -> showSymbols()
                     "File" -> {
                         val intent = android.content.Intent(this, FilePickerActivity::class.java)
                             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -119,7 +140,7 @@ class EasyKeyboardService : InputMethodService() {
                 showChoices(b, listOf("_", "=")); true
             }
             toolbar.addView(b, LinearLayout.LayoutParams(
-                if (label == "Answer") dp(82) else dp(if (label == "Save Suggestion") 61 else if (label.length > 8) 92 else if (label.length > 4) 64 else 48),
+                if (label == "Answer") dp(82) else dp(if (label.length > 8) 92 else if (label.length > 4) 64 else 48),
                 -1
             ))
         }
@@ -176,7 +197,8 @@ class EasyKeyboardService : InputMethodService() {
                                 symbolLayout = false
                             } else {
                                 symbolLayout = !symbolLayout
-                            }
+                            }       
+                            
                             setInputView(buildKeyboard())
                             true
                         }
@@ -222,7 +244,7 @@ class EasyKeyboardService : InputMethodService() {
             }
             if (index == 2) row.addView(key("Enter", true) { answerCurrentEditor() },
                 LinearLayout.LayoutParams(0, -1, 1.8f))
-            outer.addView(row, LinearLayout.LayoutParams(-1, dp(61)))
+            outer.addView(row, LinearLayout.LayoutParams(-1, (dp(61) * keyboardScale).toInt()))
         }
 
         val bottom = LinearLayout(this).apply {
@@ -251,8 +273,10 @@ class EasyKeyboardService : InputMethodService() {
         val space = key("Space", true) { typeText(" ") }
         bottom.addView(space, LinearLayout.LayoutParams((numberKeyUnit * 2.4f).toInt(), -1))
         addBottom(".", { typeText(".") }, ";")
-        addBottom("○", { typeText("○") }, "×")
+        val circle = key("○", true) { typeText("○") }
+        bottom.addView(circle, LinearLayout.LayoutParams((sameAsNumberKey * 1.18f).toInt(), -1))
         addBottom("؟", { typeText("؟") }, "✓")
+        addBottom("،", { typeText("،") })
 
         listOf(
             Triple("←", KeyEvent.KEYCODE_DPAD_LEFT, "|"),
@@ -263,14 +287,15 @@ class EasyKeyboardService : InputMethodService() {
             val b = if (corner == null) key(label, true) { sendArrow(code) }
                     else keyWithCornerSymbol(label, corner) { sendArrow(code) }
             enableRepeat(b) { sendArrow(code) }
-            bottom.addView(b, LinearLayout.LayoutParams(sameAsNumberKey, -1))
+            val arrowWidth = if (label == "←" || label == "→") (sameAsNumberKey * 1.22f).toInt() else sameAsNumberKey
+            bottom.addView(b, LinearLayout.LayoutParams(arrowWidth, -1))
         }
         val bottomScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             isFillViewport = true
             addView(bottom, ViewGroup.LayoutParams(-2, -1))
         }
-        outer.addView(bottomScroll, LinearLayout.LayoutParams(-1, dp(58)))
+        outer.addView(bottomScroll, LinearLayout.LayoutParams(-1, (dp(58) * keyboardScale).toInt()))
 return outer
     }
 
@@ -278,16 +303,16 @@ return outer
         Button(this).apply {
             text = label
             isAllCaps = false
-            textSize = when {
+            textSize = (when {
                 label.length >= 8 -> 9f
                 label.length >= 5 -> 11f
                 label.length >= 4 -> 12f
                 else -> 18f
-            }
+            } * keyboardScale).coerceAtLeast(8f)
             setTextColor(when {
                 label.contains("Backspace") -> Color.rgb(105, 25, 25)
                 label == "123" || label.all { it.isDigit() } -> Color.rgb(130, 75, 35)
-                else -> Color.rgb(25, 35, 75)
+                else -> buttonTextColor
             })
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -301,7 +326,7 @@ return outer
             val normal = when (label) {
                 "← Backspace" -> Color.rgb(244, 185, 185)
                 "Enter" -> Color.rgb(190, 220, 250)
-                else -> Color.rgb(247, 249, 252)
+                else -> buttonColor
             }
             background = bg(normal)
             setOnTouchListener { v, e ->
@@ -330,6 +355,101 @@ return outer
         }
         frame.addView(mark, FrameLayout.LayoutParams(-1, -1))
         return frame
+    }
+
+
+    private fun selectText() {
+        val ic = currentInputConnection
+        if (ic == null) {
+            Toast.makeText(this, "ویرایشگری در دسترس نیست", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val selected = ic.performContextMenuAction(android.R.id.selectAll)
+        if (!selected) {
+            Toast.makeText(this, "انتخاب متن در این برنامه پشتیبانی نمی‌شود", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showSetup() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(12), dp(18), dp(8))
+        }
+        root.addView(TextView(this).apply {
+            text = "اندازه صفحه‌کلید"
+            textSize = 16f
+        })
+        val size = SeekBar(this).apply {
+            max = 50
+            progress = ((keyboardScale - 0.75f) * 100f).toInt().coerceIn(0, 50)
+        }
+        root.addView(size, LinearLayout.LayoutParams(-1, dp(48)))
+        root.addView(TextView(this).apply {
+            text = "رنگ دکمه‌ها"
+            textSize = 16f
+        })
+        val colors = listOf(
+            "روشن" to Color.rgb(247,249,252),
+            "آبی" to Color.rgb(190,220,250),
+            "سبز" to Color.rgb(196,232,199),
+            "زرد" to Color.rgb(255,238,170),
+            "صورتی" to Color.rgb(246,205,215),
+            "خاکستری" to Color.rgb(215,220,226)
+        )
+        val colorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        colors.forEach { (name, color) ->
+            val b = Button(this).apply { 
+                text = name
+                textSize = 10f
+                setOnClickListener {
+                    buttonColor = color
+                    getSharedPreferences("appearance", Context.MODE_PRIVATE).edit().putInt("button_color", color).apply()
+                    setInputView(buildKeyboard())
+                }
+            }
+            colorRow.addView(b, LinearLayout.LayoutParams(0, dp(44), 1f))
+        }
+        root.addView(colorRow)
+        root.addView(TextView(this).apply {
+            text = "رنگ نوشته دکمه‌ها"
+            textSize = 16f
+        })
+        val textColors = listOf(
+            "مشکی" to Color.rgb(25,35,75),
+            "سفید" to Color.WHITE,
+            "قرمز" to Color.rgb(170,35,35),
+            "آبی" to Color.rgb(25,75,170),
+            "سبز" to Color.rgb(25,110,55)
+        )
+        val textColorRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        textColors.forEach { (name, color) ->
+            val b = Button(this).apply {
+                text = name
+                textSize = 10f
+                setOnClickListener {
+                    buttonTextColor = color
+                    getSharedPreferences("appearance", Context.MODE_PRIVATE).edit().putInt("text_color", color).apply()
+                    setInputView(buildKeyboard())
+                }
+            }
+            textColorRow.addView(b, LinearLayout.LayoutParams(0, dp(44), 1f))
+        }
+        root.addView(textColorRow)
+        val export = Button(this).apply {
+            text = "Export List"
+            setOnClickListener { exportSuggestions() }
+        }
+        root.addView(export, LinearLayout.LayoutParams(-1, dp(48)))
+        AlertDialog.Builder(this)
+            .setTitle("Setup")
+            .setView(root)
+            .setPositiveButton("ذخیره") { _, _ ->
+                keyboardScale = 0.75f + size.progress / 100f
+                getSharedPreferences("appearance", Context.MODE_PRIVATE).edit().putFloat("scale", keyboardScale).apply()
+                setInputView(buildKeyboard())
+            }
+            .setNegativeButton("بستن", null)
+            .show()
     }
 
     private fun removeSuggestion(word: String) {
@@ -383,7 +503,7 @@ return outer
             setBackgroundColor(Color.rgb(190, 198, 208))
         }
         val popup = PopupWindow(content, -2, dp(58), true).apply {
-            isOutsideTouchable = true; elevation = dp(8).toFloat()
+            isOutsideTouchable = true; isFocusable = true; isTouchable = true; elevation = dp(8).toFloat()
         }
         choices.forEach { value ->
             content.addView(key(value, false) { typeText(value); popup.dismiss() },
@@ -413,14 +533,26 @@ return outer
         items.chunked(columns).forEach { group ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             group.forEach { item ->
-                val symbolButton = key(item, false) { typeText(item); popup.dismiss() }
+                val symbolButton = key(item, false) {
+                    typeText(item)
+                    popup.dismiss()
+                }.apply { isClickable = true; isFocusable = true }
                 row.addView(symbolButton, LinearLayout.LayoutParams(0, dp(44), 1f))
             }
             content.addView(row)
         }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        popup = PopupWindow(root, -1, dp(280), true).apply { isOutsideTouchable = true; elevation = dp(8).toFloat() }
-        popup.showAtLocation(window.window?.decorView ?: root, Gravity.BOTTOM, 0, dp(260))
+        popup = PopupWindow(root, -1, dp(300), true).apply {
+            isOutsideTouchable = true
+            isFocusable = true
+            isTouchable = true
+            elevation = dp(8).toFloat()
+            setBackgroundDrawable(GradientDrawable().apply {
+                setColor(Color.rgb(235, 239, 245))
+                cornerRadius = dp(8).toFloat()
+            })
+        }
+        popup.showAtLocation(window.window?.decorView ?: root, Gravity.BOTTOM, 0, dp(220))
     }
     private var popupDismiss: (() -> Unit)? = null
 
