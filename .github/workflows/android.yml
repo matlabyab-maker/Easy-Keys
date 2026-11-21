@@ -1,4 +1,4 @@
-name: Android Build
+name: Easy Keys Android Build
 
 on:
   push:

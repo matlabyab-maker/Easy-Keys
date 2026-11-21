@@ -18,7 +18,7 @@ class MainActivity : Activity() {
             setPadding(28, 36, 28, 28)
         }
         layout.addView(TextView(this).apply {
-            text = "Easy-Keyboard\n\nبرای استفاده، ابتدا صفحه‌کلید را فعال و سپس انتخاب کنید."
+            text = "Easy Keys\n\nبرای استفاده، ابتدا صفحه‌کلید را فعال و سپس انتخاب کنید."
             textSize = 21f
         })
         layout.addView(Button(this).apply {
