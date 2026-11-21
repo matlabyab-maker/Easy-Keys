@@ -60,7 +60,7 @@ class EasyKeyboardService : InputMethodService() {
         val suggestionPrefs = getSharedPreferences("suggestions", Context.MODE_PRIVATE)
         val stored = suggestionPrefs.getStringSet("items", emptySet())?.toList().orEmpty()
         val beforeCursor = currentInputConnection?.getTextBeforeCursor(80, 0)?.toString().orEmpty()
-        val currentToken = beforeCursor.substringAfterLast(' ').substringAfterLast('\\n')
+        val currentToken = beforeCursor.substringAfterLast(' ').substringAfterLast('\n')
         val dictionary = listOf(
             "نه", "بله", "چرا", "این", "در", "که", "زیرا", "و", "بلکه", "همه", "یک", "اینجا", "موارد",
             "من", "تو", "ما", "شما", "آنها", "برای", "با", "از", "به", "اما", "اگر", "چون", "بسیار",
