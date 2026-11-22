@@ -15,6 +15,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.widget.Button
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -31,6 +32,8 @@ class EasyKeyboardService : InputMethodService() {
     private var caps = false
     private var symbolLayout = false
     private var numberRowVisible = false
+    private var selectMode = false
+    private var layoutMode = "standard"
     private val undoStack = mutableListOf<String>()
     private val redoStack = mutableListOf<String>()
     private val handler = Handler(Looper.getMainLooper())
@@ -46,6 +49,7 @@ class EasyKeyboardService : InputMethodService() {
         keyboardScale = appearance.getFloat("scale", 1.0f).coerceIn(0.75f, 1.25f)
         buttonColor = appearance.getInt("button_color", Color.rgb(247, 249, 252))
         buttonTextColor = appearance.getInt("text_color", Color.rgb(25, 35, 75))
+        layoutMode = appearance.getString("layout_mode", layoutMode) ?: "standard"
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(2), dp(2), dp(2), dp(2))
@@ -95,11 +99,19 @@ class EasyKeyboardService : InputMethodService() {
         listOf("Select", "Setup", "Save Suggestion").forEach { label ->
             val action = when (label) {
                 "Save Suggestion" -> ({ saveSuggestion() })
-                "Select" -> ({ selectText() })
+                "Select" -> ({ toggleSelectMode() })
                 else -> ({ showSetup() })
             }
             val button = key(label, true, action)
-            val width = when (label) { "Save Suggestion" -> dp(112); else -> dp(76) }
+            val screenWidthDp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
+            // Match the width of a regular letter key in the third alphabet row.
+            val letterKeyWidth = (screenWidthDp / if (persian) 13.15f else 10.15f).toInt()
+            val width = when (label) {
+                "Save Suggestion" -> letterKeyWidth
+                "Setup" -> dp(62)
+                else -> dp(76)
+            }
+            if (label == "Select" && selectMode) button.setBackgroundColor(Color.rgb(255, 220, 35))
             actionRow.addView(button, LinearLayout.LayoutParams(width, dp(48)))
         }
         actionRowScroll.addView(actionRow)
@@ -109,7 +121,8 @@ class EasyKeyboardService : InputMethodService() {
             isHorizontalScrollBarEnabled = false
         }
         val toolbar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val toolbarKeys = listOf("«", "»", "−", "_", "Undo", "Redo", "Past", "Copy", "Emoji", "اعراب", "Symbols", "File", "Answer")
+        val toolbarKeys = listOf("«", "»", "−", "_", "Undo", "Redo", "Past", "Copy", "Emoji", "اعراب", "File", "Answer")
+        val letterKeyWidth = dp(((resources.displayMetrics.widthPixels / resources.displayMetrics.density) / 11f).toInt())
         toolbarKeys.forEach { label ->
             val b = key(label, true) {
                 when (label) {
@@ -121,7 +134,6 @@ class EasyKeyboardService : InputMethodService() {
                     "Export List" -> exportSuggestions()
                     "Emoji" -> showGrid("Emoji", listOf("😀","😁","😂","🤣","😊","😍","😘","😎","😭","😡","👍","👎","👏","🙏","❤️","💙","🔥","🌹","🎉","✅","❌","⭐","☀️","🌙"), 6)
                     "اعراب" -> showGrid("اعراب", listOf("َ","ِ","ُ","ً","ٍ","ٌ","ْ","ّ","ٰ","ٓ","ٔ","ٕ"), 6)
-                    "Symbols" -> showSymbols()
                     "File" -> {
                         val intent = android.content.Intent(this, FilePickerActivity::class.java)
                             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -139,13 +151,50 @@ class EasyKeyboardService : InputMethodService() {
             if (label == "_") b.setOnLongClickListener {
                 showChoices(b, listOf("_", "=")); true
             }
-            toolbar.addView(b, LinearLayout.LayoutParams(
-                if (label == "Answer") dp(82) else dp(if (label.length > 8) 92 else if (label.length > 4) 64 else 48),
-                -1
-            ))
+            val toolbarWidth = when (label) {
+                "Emoji", "اعراب" -> letterKeyWidth
+                "Answer" -> dp(82)
+                else -> dp(if (label.length > 8) 92 else if (label.length > 4) 64 else 48)
+            }
+            toolbar.addView(b, LinearLayout.LayoutParams(toolbarWidth, -1))
         }
         toolbarScroll.addView(toolbar)
         outer.addView(toolbarScroll, LinearLayout.LayoutParams(-1, dp(48)))
+
+        if (layoutMode == "computer") {
+            val pcRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            listOf(
+                "Tab" to KeyEvent.KEYCODE_TAB,
+                "Esc" to KeyEvent.KEYCODE_ESCAPE,
+                "Ctrl" to KeyEvent.KEYCODE_CTRL_LEFT,
+                "Alt" to KeyEvent.KEYCODE_ALT_LEFT,
+                "Home" to KeyEvent.KEYCODE_MOVE_HOME,
+                "End" to KeyEvent.KEYCODE_MOVE_END
+            ).forEach { (label, code) ->
+                pcRow.addView(key(label, true) { sendKeyCode(code) },
+                    LinearLayout.LayoutParams(0, dp(40), 1f))
+            }
+            outer.addView(pcRow, LinearLayout.LayoutParams(-1, dp(40)))
+            numberRowVisible = true
+        } else if (layoutMode == "mouse") {
+            val mouseRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            listOf(
+                "↑" to KeyEvent.KEYCODE_DPAD_UP,
+                "←" to KeyEvent.KEYCODE_DPAD_LEFT,
+                "کلیک" to KeyEvent.KEYCODE_DPAD_CENTER,
+                "راست" to KeyEvent.KEYCODE_MENU,
+                "→" to KeyEvent.KEYCODE_DPAD_RIGHT,
+                "↓" to KeyEvent.KEYCODE_DPAD_DOWN
+            ).forEach { (label, code) ->
+                val control = key(label, true) { sendKeyCode(code) }
+                if (code in listOf(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_LEFT,
+                        KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN)) {
+                    enableRepeat(control) { sendKeyCode(code) }
+                }
+                mouseRow.addView(control, LinearLayout.LayoutParams(0, dp(40), 1f))
+            }
+            outer.addView(mouseRow, LinearLayout.LayoutParams(-1, dp(40)))
+        }
 
         if (numberRowVisible) {
             val numberRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -168,11 +217,18 @@ class EasyKeyboardService : InputMethodService() {
             listOf("A", "S", "D", "F", "G", "H", "J", "K", "L"),
             listOf("Z", "X", "C", "V", "B", "N", "M")
         )
-        val alternateRows = listOf(
-            listOf("!", "@", "#", "$", "%", "^", "&", "*", "(", ")"),
-            listOf("-", "_", "+", "=", "[", "]", "{", "}", ";", "'"),
-            listOf(":", "\"", "/", "?", "\\", "|", "<", ">", "×", "✓")
+        // Holding Shift opens the complete former Symbols collection here.
+        val alternateSymbols = listOf(
+            "!", "@", "#", "$", "%", "^", "&", "*", "(", ")",
+            "-", "_", "+", "=", "[", "]", "{", "}", ";", "'",
+            ":", "\\\"", "/", "?", "\\\\", "|", "<", ">", "×", "✓",
+            "©", "®", "™", "§", "¶", "•", "…", "‰", "°", "℃",
+            "℉", "№", "₽", "$", "€", "£", "¥", "¢", "₹", "₩",
+            "÷", "≠", "≈", "≡", "≤", "≥", "±", "√", "∞", "∑",
+            "∏", "∫", "π", "←", "→", "↑", "↓", "↔", "↕", "○",
+            "●", "□", "■"
         )
+        val alternateRows = alternateSymbols.chunked(10)
         val rows = if (symbolLayout) alternateRows else normalRows
 
         rows.forEachIndexed { index, chars ->
@@ -193,12 +249,17 @@ class EasyKeyboardService : InputMethodService() {
                         MotionEvent.ACTION_UP -> {
                             holdTask?.let { handler.removeCallbacks(it) }
                             if (longPressed) {
-                                caps = !caps
+                                // Holding Shift opens the alternate-symbol keyboard.
+                                symbolLayout = true
+                                caps = false
+                            } else if (symbolLayout) {
+                                // A short tap on ABC returns to the normal letters.
                                 symbolLayout = false
+                                caps = false
                             } else {
-                                symbolLayout = !symbolLayout
-                            }       
-                            
+                                // A short tap enables one-shot uppercase.
+                                caps = true
+                            }
                             setInputView(buildKeyboard())
                             true
                         }
@@ -219,6 +280,10 @@ class EasyKeyboardService : InputMethodService() {
                     if (symbolLayout) {
                         symbolLayout = false
                         setInputView(buildKeyboard())
+                    } else if (caps) {
+                        // Uppercase applies to exactly one typed letter.
+                        caps = false
+                        setInputView(buildKeyboard())
                     }
                 }
                 val variants = if (!symbolLayout && persian) when (ch) {
@@ -236,7 +301,8 @@ class EasyKeyboardService : InputMethodService() {
                         LinearLayout.LayoutParams(0, -1, 1f))
                 }
             }
-            if (index == 1) {
+
+       if (index == 1) {
                 val back = key("← Backspace", true) { deleteOne() }
                 back.contentDescription = "Backspace"
                 enableRepeat(back) { deleteOne() }
@@ -270,6 +336,18 @@ class EasyKeyboardService : InputMethodService() {
             symbolLayout = false
             setInputView(buildKeyboard())
         })
+        // Keep the four navigation arrows directly between language and Space.
+        listOf(
+            Triple("←", KeyEvent.KEYCODE_DPAD_LEFT, "|"),
+            Triple("→", KeyEvent.KEYCODE_DPAD_RIGHT, "~"),
+            Triple("↑", KeyEvent.KEYCODE_DPAD_UP, "#"),
+            Triple("↓", KeyEvent.KEYCODE_DPAD_DOWN, null)
+        ).forEach { (label, code, corner) ->
+            val arrow = if (corner == null) key(label, true) { sendArrow(code, selectMode) }
+                        else keyWithCornerSymbol(label, corner) { sendArrow(code, selectMode) }
+            enableRepeat(arrow) { sendArrow(code, selectMode) }
+            bottom.addView(arrow, LinearLayout.LayoutParams(sameAsNumberKey, -1))
+        }
         val space = key("Space", true) { typeText(" ") }
         bottom.addView(space, LinearLayout.LayoutParams((numberKeyUnit * 2.4f).toInt(), -1))
         addBottom(".", { typeText(".") }, ";")
@@ -278,18 +356,6 @@ class EasyKeyboardService : InputMethodService() {
         addBottom("؟", { typeText("؟") }, "✓")
         addBottom("،", { typeText("،") })
 
-        listOf(
-            Triple("←", KeyEvent.KEYCODE_DPAD_LEFT, "|"),
-            Triple("→", KeyEvent.KEYCODE_DPAD_RIGHT, "~"),
-            Triple("↑", KeyEvent.KEYCODE_DPAD_UP, "#"),
-            Triple("↓", KeyEvent.KEYCODE_DPAD_DOWN, null)
-        ).forEach { (label, code, corner) ->
-            val b = if (corner == null) key(label, true) { sendArrow(code) }
-                    else keyWithCornerSymbol(label, corner) { sendArrow(code) }
-            enableRepeat(b) { sendArrow(code) }
-            val arrowWidth = if (label == "←" || label == "→") (sameAsNumberKey * 1.22f).toInt() else sameAsNumberKey
-            bottom.addView(b, LinearLayout.LayoutParams(arrowWidth, -1))
-        }
         val bottomScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             isFillViewport = true
@@ -358,19 +424,22 @@ return outer
     }
 
 
-    private fun selectText() {
-        val ic = currentInputConnection
-        if (ic == null) {
-            Toast.makeText(this, "ویرایشگری در دسترس نیست", Toast.LENGTH_SHORT).show()
+    private fun toggleSelectMode() {
+        if (currentInputConnection == null) {
+            Toast.makeText(this, "ابتدا محل نوشتن را انتخاب کنید", Toast.LENGTH_SHORT).show()
             return
         }
-        val selected = ic.performContextMenuAction(android.R.id.selectAll)
-        if (!selected) {
-            Toast.makeText(this, "انتخاب متن در این برنامه پشتیبانی نمی‌شود", Toast.LENGTH_SHORT).show()
-        }
+        selectMode = !selectMode
+        Toast.makeText(
+            this,
+            if (selectMode) "حالت انتخاب فعال است؛ با فلش‌ها محدوده را انتخاب کنید" else "حالت انتخاب خاموش شد",
+            Toast.LENGTH_SHORT
+        ).show()
+        setInputView(buildKeyboard())
     }
 
     private fun showSetup() {
+        lateinit var setupDialog: AlertDialog
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(12), dp(18), dp(8))
@@ -435,12 +504,33 @@ return outer
             textColorRow.addView(b, LinearLayout.LayoutParams(0, dp(44), 1f))
         }
         root.addView(textColorRow)
+        val layoutButton = Button(this).apply {
+            text = "انتخاب چیدمان صفحه‌کلید"
+            setOnClickListener {
+                val labels = arrayOf("استاندارد", "کامپیوتری", "موس‌دار")
+                val values = arrayOf("standard", "computer", "mouse")
+                AlertDialog.Builder(this@EasyKeyboardService)
+                    .setTitle("مدل چیدمان")
+                    .setSingleChoiceItems(labels, values.indexOf(layoutMode).coerceAtLeast(0)) { dialog, which ->
+                        layoutMode = values[which]
+                        getSharedPreferences("appearance", Context.MODE_PRIVATE)
+                            .edit().putString("layout_mode", layoutMode).apply()
+                        numberRowVisible = layoutMode == "computer"
+                        dialog.dismiss()
+                        setupDialog.dismiss()
+                        setInputView(buildKeyboard())
+                    }
+                    .setNegativeButton("بستن", null)
+                    .show()
+            }
+        }
+        root.addView(layoutButton, LinearLayout.LayoutParams(-1, dp(46)))
         val export = Button(this).apply {
             text = "Export List"
             setOnClickListener { exportSuggestions() }
         }
         root.addView(export, LinearLayout.LayoutParams(-1, dp(48)))
-        AlertDialog.Builder(this)
+        setupDialog = AlertDialog.Builder(this)
             .setTitle("Setup")
             .setView(root)
             .setPositiveButton("ذخیره") { _, _ ->
@@ -449,7 +539,8 @@ return outer
                 setInputView(buildKeyboard())
             }
             .setNegativeButton("بستن", null)
-            .show()
+            .create()
+        setupDialog.show()
     }
 
     private fun removeSuggestion(word: String) {
@@ -496,17 +587,22 @@ return outer
         }
     }
 
-    private fun showChoices(anchor: View, choices: List<String>) {
+   private fun showChoices(anchor: View, choices: List<String>) {
+        // Keep the editor connection that was active before the popup appears.
+        val editorConnection = currentInputConnection ?: return
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
             setBackgroundColor(Color.rgb(190, 198, 208))
         }
-        val popup = PopupWindow(content, -2, dp(58), true).apply {
-            isOutsideTouchable = true; isFocusable = true; isTouchable = true; elevation = dp(8).toFloat()
+        val popup = PopupWindow(content, -2, dp(58), false).apply {
+            isOutsideTouchable = true; isFocusable = false; isTouchable = true; elevation = dp(8).toFloat()
         }
         choices.forEach { value ->
-            content.addView(key(value, false) { typeText(value); popup.dismiss() },
+            content.addView(key(value, false) {
+                typeText(value, editorConnection)
+                popup.dismiss()
+            },
                 LinearLayout.LayoutParams(dp(48), dp(50)))
         }
         popup.showAtLocation(anchor, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, 0, dp(250))
@@ -525,6 +621,8 @@ return outer
     }
 
     private fun showGrid(title: String, items: List<String>, columns: Int) {
+        // Preserve the active text editor while the grid is displayed.
+        val editorConnection = currentInputConnection ?: return
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(6), dp(6), dp(6)) }
         root.addView(TextView(this).apply { text = title; setTextColor(Color.DKGRAY); textSize = 14f })
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -534,17 +632,17 @@ return outer
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             group.forEach { item ->
                 val symbolButton = key(item, false) {
-                    typeText(item)
+                    typeText(item, editorConnection)
                     popup.dismiss()
-                }.apply { isClickable = true; isFocusable = true }
+                }.apply { isClickable = true; isFocusable = false }
                 row.addView(symbolButton, LinearLayout.LayoutParams(0, dp(44), 1f))
             }
             content.addView(row)
         }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        popup = PopupWindow(root, -1, dp(300), true).apply {
+        popup = PopupWindow(root, -1, dp(300), false).apply {
             isOutsideTouchable = true
-            isFocusable = true
+            isFocusable = false
             isTouchable = true
             elevation = dp(8).toFloat()
             setBackgroundDrawable(GradientDrawable().apply {
@@ -586,7 +684,15 @@ return outer
         connection.sendKeyEvent(KeyEvent(System.currentTimeMillis(), now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
     }
 
-    private fun sendArrow(keyCode: Int) {
+    private fun sendArrow(keyCode: Int, extendSelection: Boolean = selectMode) {
+        val c = currentInputConnection ?: return
+        val now = System.currentTimeMillis()
+        val meta = if (extendSelection) KeyEvent.META_SHIFT_ON else 0
+        c.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, meta))
+        c.sendKeyEvent(KeyEvent(System.currentTimeMillis(), now, KeyEvent.ACTION_UP, keyCode, 0, meta))
+    }
+
+    private fun sendKeyCode(keyCode: Int) {
         val c = currentInputConnection ?: return
         val now = System.currentTimeMillis()
         c.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
@@ -606,8 +712,12 @@ return outer
         if (!text.isNullOrEmpty()) typeText(text)
     }
 
-    private fun typeText(text: String) {
-        currentInputConnection?.let { undoStack.add(text); redoStack.clear(); it.commitText(text, 1) }
+    private fun typeText(text: String, connection: InputConnection? = currentInputConnection) {
+        connection?.let {
+            undoStack.add(text)
+            redoStack.clear()
+            it.commitText(text, 1)
+        }
     }
     private fun undo() {
         val last = undoStack.removeLastOrNull() ?: return
