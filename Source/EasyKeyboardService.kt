@@ -104,7 +104,7 @@ class EasyKeyboardService : InputMethodService() {
                 hint = "${index + 1}: 5-12"
                 textSize = 11f
                 gravity = Gravity.CENTER
-                singleLine = true
+                setSingleLine(true)
                 inputType = InputType.TYPE_CLASS_TEXT
                 setPadding(dp(2), 0, dp(2), 0)
                 background = GradientDrawable().apply {
@@ -407,14 +407,186 @@ return outer
     private fun key(label: String, dark: Boolean, action: () -> Unit): Button =
         Button(this).apply {
             text = label
-            isAdow(content, -2, dp(58), true).apply {
-            isOutsideTouchable = true; elevation = dp(8).toFloat()
+             isAllCaps = false
+            textSize = when {
+                label.length > 9 -> 10f
+                label.length > 5 -> 12f
+                else -> 15f
+            }
+            setTextColor(buttonTextColor)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            minWidth = 0
+            minHeight = 0
+            setPadding(dp(2), 0, dp(2), 0)
+            isSoundEffectsEnabled = false
+            background = GradientDrawable().apply {
+                setColor(if (dark) Color.rgb(225, 230, 238) else buttonColor)
+                cornerRadius = dp(6).toFloat()
+                setStroke(dp(1), Color.rgb(160, 170, 185))
+            }
+            setOnClickListener { action() }
+        }
+
+    private fun showChoices(anchor: View, choices: List<String>) {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setBackgroundColor(Color.WHITE)
+        }
+        val popup = PopupWindow(content, -2, -2, true).apply {
+            isOutsideTouchable = true
+            elevation = dp(8).toFloat()
         }
         choices.forEach { value ->
-            content.addView(key(value, false) { typeText(value); popup.dismiss() },
-                LinearLayout.LayoutParams(dp(48), dp(50)))
+            content.addView(key(value, false) {
+                typeText(value)
+                popup.dismiss()
+            }, LinearLayout.LayoutParams(dp(48), dp(50)))
         }
-        popup.showAtLocation(anchor, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, 0, dp(250))
+        popup.showAtLocation(window.window?.decorView ?: anchor,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, 0, dp(250))
+    }
+
+    private fun keyWithCornerSymbol(label: String, corner: String, action: () -> Unit): View {
+        val box = FrameLayout(this)
+        val main = key(label, true, action)
+        box.addView(main, FrameLayout.LayoutParams(-1, -1))
+        val mark = TextView(this).apply {
+            text = corner
+            textSize = 8f
+            setTextColor(buttonTextColor)
+            gravity = Gravity.TOP or Gravity.END
+            setPadding(0, dp(1), dp(2), 0)
+            isClickable = false
+            isFocusable = false
+        }
+        box.addView(mark, FrameLayout.LayoutParams(-1, -1))
+        return box
+    }
+
+    private fun enableRepeat(view: View, action: () -> Unit) {
+        var task: Runnable? = null
+        view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    task?.let { handler.removeCallbacks(it) }
+                    action()
+                    val repeat = object : Runnable {
+                        override fun run() {
+                            action()
+                            handler.postDelayed(this, 75)
+                        }
+                    }
+                    task = repeat
+                    handler.postDelayed(repeat, 380)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    task?.let { handler.removeCallbacks(it) }
+                    task = null
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun removeSuggestion(word: String) {
+        val prefs = getSharedPreferences("suggestions", Context.MODE_PRIVATE)
+        val items = prefs.getStringSet("items", emptySet())?.toMutableSet() ?: mutableSetOf()
+        items.remove(word)
+        prefs.edit().putStringSet("items", items).apply()
+        setInputView(buildKeyboard())
+    }
+
+    private fun toggleSelectMode() {
+        selectMode = !selectMode
+        setInputView(buildKeyboard())
+    }
+
+    private fun showSetup() {
+        val options = arrayOf("Standard", "Computer", "Mouse")
+        val current = when (layoutMode) { "computer" -> 1; "mouse" -> 2; else -> 0 }
+        AlertDialog.Builder(this)
+            .setTitle("Keyboard layout")
+            .setSingleChoiceItems(options, current) { dialog, which ->
+                layoutMode = when (which) { 1 -> "computer"; 2 -> "mouse"; else -> "standard" }
+                getSharedPreferences("appearance", Context.MODE_PRIVATE).edit()
+                    .putString("layout_mode", layoutMode).apply()
+                dialog.dismiss()
+                setInputView(buildKeyboard())
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun exportSuggestions() {
+        val items = getSharedPreferences("suggestions", Context.MODE_PRIVATE)
+            .getStringSet("items", emptySet())?.toList().orEmpty().sorted()
+        val file = java.io.File(filesDir, "EasyKeys_Suggestions.txt")
+        file.writeText(items.joinToString("\n"), Charsets.UTF_8)
+        Toast.makeText(this, "Saved: ${file.name}", Toast.LENGTH_LONG).show()
+    }
+
+    private fun sendKeyCode(code: Int) {
+        val connection = currentInputConnection ?: return
+        val now = System.currentTimeMillis()
+        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
+        connection.sendKeyEvent(KeyEvent(System.currentTimeMillis(), now, KeyEvent.ACTION_UP, code, 0))
+    }
+
+    private fun sendArrow(keyCode: Int, selecting: Boolean = false) {
+        val connection = currentInputConnection ?: return
+        val meta = if (selecting) KeyEvent.META_SHIFT_ON else 0
+        val now = System.currentTimeMillis()
+        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, meta))
+        connection.sendKeyEvent(KeyEvent(System.currentTimeMillis(), now, KeyEvent.ACTION_UP, keyCode, meta))
+    }
+
+    private fun saveTextRanges(rangeTexts: List<String>, cut: Boolean) {
+        val connection = currentInputConnection
+        val extracted = connection?.getExtractedText(ExtractedTextRequest(), 0)
+        val fullText = extracted?.text?.toString()
+        if (connection == null || extracted == null || fullText == null) {
+            Toast.makeText(this, "Cannot read editor text", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val lines = fullText.split("\n")
+        val starts = IntArray(lines.size)
+        var cursor = 0
+        lines.forEachIndexed { i, line -> starts[i] = cursor; cursor += line.length + 1 }
+        val ranges = mutableListOf<Triple<Int, Int, String>>()
+        rangeTexts.forEach { raw ->
+            val match = Regex("^\\s*(\\d+)\\s*[-–—]\\s*(\\d+)\\s*$").matchEntire(raw)
+            if (match != null) {
+                val first = match.groupValues[1].toIntOrNull() ?: return@forEach
+                val last = match.groupValues[2].toIntOrNull() ?: return@forEach
+                if (first >= 1 && last >= first && last <= lines.size) {
+                    val begin = starts[first - 1]
+                    val finish = if (last < lines.size) starts[last] - 1 else fullText.length
+                    ranges.add(Triple(begin, finish, lines.subList(first - 1, last).joinToString("\n")))
+                }
+            }
+        }
+        if (ranges.isEmpty()) {
+            Toast.makeText(this, "Enter valid line ranges, e.g. 5-12", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val output = ranges.joinToString("\n\n--------------------\n\n") { it.third }
+        val file = java.io.File(filesDir, "EasyKeys_RangeCopies.txt")
+        file.writeText(output, Charsets.UTF_8)
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("EasyKeys ranges", output))
+        if (cut) {
+            ranges.sortedByDescending { it.first }.forEach { range ->
+                val start = extracted.startOffset + range.first
+                val end = extracted.startOffset + range.second
+                connection.setSelection(start, end)
+                connection.commitText("", 1)
+            }
+        }
+        Toast.makeText(this, "Saved ${ranges.size} range(s): ${file.name}", Toast.LENGTH_LONG).show()
     }
 
     private fun showSymbols() {
