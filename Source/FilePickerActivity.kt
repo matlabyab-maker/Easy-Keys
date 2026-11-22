@@ -10,6 +10,12 @@ class FilePickerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android may recreate this Activity while the system document picker is open.
+        // Launch the picker only once; otherwise it can reopen after returning to the app.
+        if (savedInstanceState != null) {
+            finish()
+            return
+        }
         if (intent.getBooleanExtra("export_suggestions", false)) {
             val create = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
