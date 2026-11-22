@@ -161,8 +161,8 @@ class EasyKeyboardService : InputMethodService() {
         val screenWidthDp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
         val letterUnit = ((screenWidthDp - 4f) / 12.35f).coerceAtLeast(dp(18).toFloat())
         val sameAsLetter = letterUnit.toInt()
-        val shiftWidth = (letterUnit * 1.35f).toInt()
-        val arrowWidth = (letterUnit 
+val shiftWidth = (letterUnit * 1.35f).toInt()
+val arrowWidth = letterUnit.toInt()
         return outer
     }
 
