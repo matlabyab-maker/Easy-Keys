@@ -389,7 +389,7 @@ class EasyKeyboardService : InputMethodService() {
             chars.forEach { ch ->
                 val shown = if (!symbolLayout && !persian && caps) ch.uppercase()
                             else if (!symbolLayout
-                                      // Uppercase applies to exactly one typed letter.
+                                       // Uppercase applies to exactly one typed letter.
                         caps = false
                         setInputView(buildKeyboard())
                     }
@@ -600,7 +600,7 @@ class EasyKeyboardService : InputMethodService() {
             }
         }
     }
-    
+
     private fun removeSuggestion(word: String) {
         val prefs = getSharedPreferences("suggestions", Context.MODE_PRIVATE)
         val items = prefs.getStringSet("items", emptySet())?.toMutableSet() ?: mutableSetOf()
@@ -962,4 +962,21 @@ class EasyKeyboardService : InputMethodService() {
             }
         } else {
             if (action.insertedText.isNotEmpty()) {
-                connection.dele
+                connection.deleteSurroundingText(action.insertedText.length, 0)
+            }
+            if (action.removedText.isNotEmpty()) connection.commitText(action.removedText, 1)
+        }
+        redoStack.add(action)
+    }
+
+    private fun redo() {
+        val connection = currentInputConnection ?: return
+        val action = redoStack.removeLastOrNull() ?: return
+        if (action.rangeDeletions.isNotEmpty()) {
+            action.rangeDeletions.sortedByDescending { it.originalStart }.forEach { range ->
+                connection.setSelection(range.originalStart, range.originalStart + range.text.length)
+                connection.commitText("", 1)
+            }
+        } else {
+            if (action.removedText.isNotEmpty()) {
+                connection.deleteSurroundingText(action.removedText.length, 0)
