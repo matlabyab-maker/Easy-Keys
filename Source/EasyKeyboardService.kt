@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -146,50 +147,37 @@ class EasyKeyboardService : InputMethodService() {
         }
         outer.addView(suggestionScroll, LinearLayout.LayoutParams(-1, dp(38)))
 
-        // Four independent line-range fields (for example: 5-12).
-        val rangeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-        }
-        val rangeInputs = mutableListOf<EditText>()
-        repeat(4) { index ->
-            val field = EditText(this).apply {
-                hint = "${index + 1}: 5-12"
-                textSize = 11f
-                gravity = Gravity.CENTER
-                textDirection = View.TEXT_DIRECTION_LTR
-                setSingleLine(true)
-                isFocusable = true
-                isFocusableInTouchMode = true
-                isClickable = true
-                isEnabled = true
-                setSelectAllOnFocus(true)
-                setOnClickListener { requestFocus() }
-                showSoftInputOnFocus = true
-                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
-                inputType = InputType.TYPE_CLASS_TEXT
-                setPadding(dp(2), 0, dp(2), 0)
-                background = GradientDrawable().apply {
-                    setColor(Color.WHITE)
-                    cornerRadius = dp(5).toFloat()
-                    setStroke(dp(1), Color.GRAY)
-                }
+        // One active line-range field. Enter start-end and press Done to
+        // replace that range with the current clipboard text.
+        val rangeField = EditText(this).apply {
+            hint = "Lines: 5-12"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            textDirection = View.TEXT_DIRECTION_LTR
+            setSingleLine(true)
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isClickable = true
+            isEnabled = true
+            setSelectAllOnFocus(true)
+            showSoftInputOnFocus = true
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            inputType = InputType.TYPE_CLASS_TEXT
+            setPadding(dp(3), 0, dp(3), 0)
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = dp(5).toFloat()
+                setStroke(dp(1), Color.GRAY)
             }
-            rangeInputs.add(field)
-            rangeRow.addView(field, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                setMargins(dp(2), 0, dp(2), 0)
-            })
+            setOnEditorActionListener { _, actionId, event ->
+                val done = actionId == EditorInfo.IME_ACTION_DONE ||
+                    (event?.let { it.keyCode == KeyEvent.KEYCODE_ENTER && it.action == KeyEvent.ACTION_DOWN } == true)
+                if (done) {
+                    replaceLineRangeFromClipboard(text.toString())
+                    true
+                } else false
+            }
         }
-        val copyRangesButton = key("Copy", true) {
-            saveTextRanges(rangeInputs.map { it.text.toString() }, false)
-        }
-        val cutRangesButton = key("Cut", true) {
-            saveTextRanges(rangeInputs.map { it.text.toString() }, true)
-        }
-        rangeRow.addView(copyRangesButton, LinearLayout.LayoutParams(dp(60), dp(38)))
-        rangeRow.addView(cutRangesButton, LinearLayout.LayoutParams(dp(60), dp(38)))
-        outer.addView(rangeRow, LinearLayout.LayoutParams(-1, dp(42)))
 
         // Additional action row above the main toolbar
         val actionRowScroll = HorizontalScrollView(this).apply {
@@ -198,13 +186,17 @@ class EasyKeyboardService : InputMethodService() {
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
+        actionRow.addView(rangeField, LinearLayout.LayoutParams(dp(104), dp(48)).apply {
+            setMargins(dp(2), 0, dp(2), 0)
+        })
         listOf("Select", "Setup", "Save Suggestion").forEach { label ->
             val action = when (label) {
                 "Save Suggestion" -> ({ saveSuggestion() })
                 "Select" -> ({ toggleSelectMode() })
                 else -> ({ showSetup() })
             }
-            val button = key(label, true, doubleLabel = label != "Save Suggestion") { action() }
+            val buttonLabel = if (label == "Save Suggestion") "Save\nSuggestion" else label
+            val button = key(buttonLabel, true, doubleLabel = label != "Save Suggestion") { action() }
             val screenWidthDp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
             // Match the width of a regular letter key in the third alphabet row.
             val width = when (label) {
@@ -212,10 +204,18 @@ class EasyKeyboardService : InputMethodService() {
                 "Setup" -> dp(62)
                 else -> dp(76)
             }
-            if (label == "Save Suggestion") {
+            button.isEnabled = true
+            button.isClickable = true
+            button.isFocusable = true
+            if (label == "Setup") {
                 button.isSingleLine = true
-                button.textSize = 10f
-                button.setPadding(dp(3), 0, dp(3), 0)
+                button.textSize = 12f
+            }
+            if (label == "Save Suggestion") {
+                button.isSingleLine = false
+                button.textSize = 9f
+                button.setLineSpacing(0f, 0.9f)
+                button.setPadding(dp(2), 0, dp(2), 0)
             }
             if (label == "Select" && selectMode) button.setBackgroundColor(Color.rgb(255, 220, 35))
             actionRow.addView(button, LinearLayout.LayoutParams(width, dp(48)))
@@ -298,7 +298,7 @@ class EasyKeyboardService : InputMethodService() {
 
         if (numberRowVisible) {
             val numberRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            val digits = if (persian) listOf("۱","۲","۳","۴","۵","۶","۷","۸","۹","۰")
+                val digits = if (persian) listOf("۱","۲","۳","۴","۵","۶","۷","۸","۹","۰")
                          else listOf("1","2","3","4","5","6","7","8","9","0")
             val cornerSymbols = listOf("#", "@", ":", "+", "(", ")", "*", "✓", "~", "•")
             val symbolChoices = listOf(
@@ -351,6 +351,7 @@ class EasyKeyboardService : InputMethodService() {
                 shift.setOnTouchListener { _, event ->
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
+                            shift.isPressed = true
                             longPressed = false
                             val task = Runnable { longPressed = true }
                             holdTask = task
@@ -358,6 +359,7 @@ class EasyKeyboardService : InputMethodService() {
                             true
                         }
                         MotionEvent.ACTION_UP -> {
+                            shift.isPressed = false
                             holdTask?.let { handler.removeCallbacks(it) }
                             if (longPressed) {
                                 // Holding Shift opens the alternate-symbol keyboard.
@@ -375,6 +377,7 @@ class EasyKeyboardService : InputMethodService() {
                             true
                         }
                         MotionEvent.ACTION_CANCEL -> {
+                            shift.isPressed = false
                             holdTask?.let { handler.removeCallbacks(it) }
                             true
                         }
@@ -499,7 +502,12 @@ class EasyKeyboardService : InputMethodService() {
                 label.length > 5 -> 12f
                 else -> 15f
             }
-            textSize = if (doubleLabel && label.length > 1) baseTextSize * 2f else baseTextSize
+            textSize = when (label) {
+                "← Backspace", "Backspace" -> 9f
+                "123" -> 13f
+                else -> if (doubleLabel && label.length > 1) baseTextSize * 2f else baseTextSize
+            }
+            if (label == "← Backspace" || label == "Backspace" || label == "123") isSingleLine = true
             setTextColor(buttonTextColor)
             includeFontPadding = false
             typeface = Typeface.DEFAULT_BOLD
@@ -508,17 +516,23 @@ class EasyKeyboardService : InputMethodService() {
             minHeight = 0
             setPadding(dp(2), 0, dp(2), 0)
             isSoundEffectsEnabled = false
-            background = GradientDrawable().apply {
-                val keyFill = when {
-                    label == "Enter" -> Color.rgb(190, 220, 248)
-                    label == "← Backspace" || label == "Backspace" -> Color.rgb(248, 190, 190)
-                    label.length == 1 && label[0].isDigit() -> Color.rgb(220, 190, 150)
-                    else -> Color.rgb(250, 247, 235)
-                }
-                setColor(keyFill)
+            val keyFill = when {
+                label == "Enter" -> Color.rgb(190, 220, 248)
+                label == "← Backspace" || label == "Backspace" -> Color.rgb(248, 190, 190)
+                label.length == 1 && label[0].isDigit() -> Color.rgb(220, 190, 150)
+                else -> Color.rgb(250, 247, 235)
+            }
+            fun keyShape(fill: Int) = GradientDrawable().apply {
+                setColor(fill)
                 cornerRadius = dp(6).toFloat()
                 setStroke(dp(1), Color.rgb(160, 170, 185))
             }
+            background = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_pressed), keyShape(Color.rgb(255, 225, 35)))
+                addState(intArrayOf(), keyShape(keyFill))
+            }
+            isClickable = true
+            isFocusable = true
             setOnClickListener { action() }
         }
 
@@ -569,6 +583,7 @@ class EasyKeyboardService : InputMethodService() {
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    view.isPressed = true
                     task?.let { handler.removeCallbacks(it) }
                     action()
                     val repeat = object : Runnable {
@@ -582,6 +597,7 @@ class EasyKeyboardService : InputMethodService() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.isPressed = false
                     task?.let { handler.removeCallbacks(it) }
                     task = null
                     true
@@ -710,6 +726,63 @@ class EasyKeyboardService : InputMethodService() {
             redoStack.clear()
         }
         Toast.makeText(this, "Saved ${ranges.size} range(s): ${file.name}", Toast.LENGTH_LONG).show()
+    }
+
+    private fun replaceLineRangeFromClipboard(rawRange: String) {
+        val connection = currentInputConnection
+          val extracted = connection?.getExtractedText(ExtractedTextRequest().apply {
+            token = 0
+            hintMaxChars = 100000
+            hintMaxLines = 10000
+        }, 0)
+        val fullText = extracted?.text?.toString()
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val replacement = clipboard.primaryClip?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)?.coerceToText(this)?.toString()
+        if (connection == null || extracted == null || fullText == null) {
+            Toast.makeText(this, "Cannot read editor text", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (replacement.isNullOrEmpty()) {
+            Toast.makeText(this, "Copy the replacement text first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val normalized = rawRange
+            .replace('۰', '0').replace('۱', '1').replace('۲', '2').replace('۳', '3')
+            .replace('۴', '4').replace('۵', '5').replace('۶', '6').replace('۷', '7')
+            .replace('۸', '8').replace('۹', '9')
+            .replace('٠', '0').replace('١', '1').replace('٢', '2').replace('٣', '3')
+            .replace('٤', '4').replace('٥', '5').replace('٦', '6').replace('٧', '7')
+            .replace('٨', '8').replace('٩', '9')
+        val match = Regex("^\\s*(\\d+)\\s*[-–—]\\s*(\\d+)\\s*$").matchEntire(normalized)
+        val first = match?.groupValues?.get(1)?.toIntOrNull()
+        val last = match?.groupValues?.get(2)?.toIntOrNull()
+        val lines = fullText.split("\n")
+        if (first == null || last == null || first < 1 || last < first || last > lines.size) {
+            Toast.makeText(this, "Enter a valid range, e.g. 5-12", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val starts = IntArray(lines.size)
+        var cursor = 0
+        lines.forEachIndexed { index, line ->
+            starts[index] = cursor
+            cursor += line.length + 1
+        }
+        val start = extracted.startOffset + starts[first - 1]
+        val endInText = if (last < lines.size) starts[last] else fullText.length
+        val end = extracted.startOffset + endInText
+        val textToInsert = if (last < lines.size) replacement.trimEnd('\n') + "\n"
+            else replacement
+        connection.beginBatchEdit()
+        try {
+            connection.setSelection(start, end)
+            connection.commitText(textToInsert, 1)
+            undoStack.add(EditAction(fullText.substring(starts[first - 1], endInText), textToInsert))
+            redoStack.clear()
+        } finally {
+            connection.endBatchEdit()
+        }
+        Toast.makeText(this, "Lines $first-$last replaced from clipboard", Toast.LENGTH_SHORT).show()
     }
 
     private fun showSymbols() {
@@ -920,3 +993,4 @@ class EasyKeyboardService : InputMethodService() {
     }
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
+       
