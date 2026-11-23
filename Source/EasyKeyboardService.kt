@@ -416,7 +416,7 @@ class EasyKeyboardService : InputMethodService() {
                 row.addView(letterKey, LinearLayout.LayoutParams(0, -1, 1f))
                 if (!symbolLayout && persian && index == 0 && ch == "ج") {
                     val diacritics = key("اعراب", true) {
-                        showGrid("اعراب", listOf("َ","ِ","ُ","ً","ٍ","ٌ","ْ","ّ","ٰ","ٓ","ٔ","ٕ"), 6)
+                        showChoiceDialog("اعراب", listOf("َ","ِ","ُ","ً","ٍ","ٌ","ْ","ّ","ٰ","ٓ","ٔ","ٕ"))
                     }
                     diacritics.textSize = 9f
                     row.addView(diacritics, LinearLayout.LayoutParams(0, -1, 1.15f))
@@ -537,22 +537,19 @@ class EasyKeyboardService : InputMethodService() {
         }
 
     private fun showChoices(anchor: View, choices: List<String>) {
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            setBackgroundColor(Color.WHITE)
-        }
-        val popup = PopupWindow(content, -2, -2, true).apply {
-            isOutsideTouchable = true
-            elevation = dp(8).toFloat()
-        }
-        choices.forEach { value ->
-            content.addView(key(value, false) {
-                typeText(value)
-                popup.dismiss()
-            }, LinearLayout.LayoutParams(dp(48), dp(50)))
-        }
-        popup.showAsDropDown(anchor, 0, -dp(56))
+        // Native dialog avoids the anchored PopupWindow being clipped by the IME.
+        showChoiceDialog("انتخاب", choices)
+    }
+
+    private fun showChoiceDialog(title: String, choices: List<String>) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(choices.toTypedArray()) { dialog, which ->
+                if (which in choices.indices) typeText(choices[which])
+                dialog.dismiss()
+            }
+            .setNegativeButton("بستن", null)
+            .show()
     }
 
     private fun keyWithCornerSymbol(
