@@ -388,8 +388,14 @@ class EasyKeyboardService : InputMethodService() {
             }
             chars.forEach { ch ->
                 val shown = if (!symbolLayout && !persian && caps) ch.uppercase()
-                            else if (!symbolLayout
-                                       // Uppercase applies to exactly one typed letter.
+                            else if (!symbolLayout && !persian) ch.lowercase() else ch
+                val letterKey = key(shown, false) {
+                    typeText(shown)
+                    if (symbolLayout) {
+                        symbolLayout = false
+                        setInputView(buildKeyboard())
+                    } else if (caps) {
+                        // Uppercase applies to exactly one typed letter.
                         caps = false
                         setInputView(buildKeyboard())
                     }
