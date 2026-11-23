@@ -37,8 +37,14 @@ class EasyKeyboardService : InputMethodService() {
     private var numberRowVisible = false
     private var selectMode = false
     private var layoutMode = "standard"
-    private val undoStack = mutableListOf<String>()
-    private val redoStack = mutableListOf<String>()
+    private data class RangeDeletion(val originalStart: Int, val compactedStart: Int, val text: String)
+    private data class EditAction(
+        val removedText: String,
+        val insertedText: String,
+        val rangeDeletions: List<RangeDeletion> = emptyList()
+    )
+    private val undoStack = mutableListOf<EditAction>()
+    private val redoStack = mutableListOf<EditAction>()
     private val defaultSuggestionWords = listOf(
         "آیا", "از", "اگر", "اما", "آن", "آنها", "این", "اینجا" ,
         "اینجاها", "برای", "با", "بدون", "به", "بر", "بلکه", "بین" ,
@@ -181,8 +187,8 @@ class EasyKeyboardService : InputMethodService() {
         val cutRangesButton = key("Cut", true) {
             saveTextRanges(rangeInputs.map { it.text.toString() }, true)
         }
-        rangeRow.addView(copyRangesButton, LinearLayout.LayoutParams(dp(48), dp(38)))
-        rangeRow.addView(cutRangesButton, LinearLayout.LayoutParams(dp(44), dp(38)))
+        rangeRow.addView(copyRangesButton, LinearLayout.LayoutParams(dp(60), dp(38)))
+        rangeRow.addView(cutRangesButton, LinearLayout.LayoutParams(dp(60), dp(38)))
         outer.addView(rangeRow, LinearLayout.LayoutParams(-1, dp(42)))
 
         // Additional action row above the main toolbar
@@ -198,12 +204,11 @@ class EasyKeyboardService : InputMethodService() {
                 "Select" -> ({ toggleSelectMode() })
                 else -> ({ showSetup() })
             }
-            val button = key(label, true, action)
+            val button = key(label, true, doubleLabel = label != "Save Suggestion") { action() }
             val screenWidthDp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
             // Match the width of a regular letter key in the third alphabet row.
-            val letterKeyWidth = (screenWidthDp / if (persian) 13.15f else 10.15f).toInt()
             val width = when (label) {
-                "Save Suggestion" -> dp((screenWidthDp / if (persian) 13.15f else 10.15f).toInt())
+                "Save Suggestion" -> dp((screenWidthDp / if (persian) 13.15f else 11.15f).toInt())
                 "Setup" -> dp(62)
                 else -> dp(76)
             }
@@ -225,7 +230,7 @@ class EasyKeyboardService : InputMethodService() {
         }
         val toolbarKeys = listOf("«", "»", "−", "_", "Undo", "Redo", "Past", "Copy", "Emoji", "File", "Answer")
         toolbarKeys.forEach { label ->
-            val b = key(label, true) {
+            val b = key(label, true, doubleLabel = false) {
                 when (label) {
                     "Undo" -> undo()
                     "Redo" -> redo()
@@ -233,10 +238,10 @@ class EasyKeyboardService : InputMethodService() {
                     "Copy" -> copySelection()
                     "Save Suggestion" -> saveSuggestion()
                     "Export List" -> exportSuggestions()
-                    "Emoji" -> showGrid("Emoji", listOf("😀","😁","😂","🤣","😊","😍","😘","😎","😭","😡","👍","👎","👏","🙏","❤️","💙","🔥","🌹","🎉","✅","❌","⭐","☀️","🌙"), 6)
+                    "Emoji" -> showEmojiPicker()
                     "File" -> {
                         val intent = android.content.Intent(this, FilePickerActivity::class.java)
-                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         startActivity(intent)
                     }
                     "Answer" -> answerCurrentEditor()
@@ -295,9 +300,20 @@ class EasyKeyboardService : InputMethodService() {
             val numberRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             val digits = if (persian) listOf("۱","۲","۳","۴","۵","۶","۷","۸","۹","۰")
                          else listOf("1","2","3","4","5","6","7","8","9","0")
-            val legends = listOf("@", "( )", "& *", "+", "; =", "%", "{ }", "[ ]", "× ✓", "| ~ #")
+            val cornerSymbols = listOf("#", "@", ":", "+", "(", ")", "*", "✓", "~", "•")
+            val symbolChoices = listOf(
+                listOf("#", "{", "}"), listOf("@", "[", "]"),
+                listOf(":", "÷", "×"), listOf("+", "|", "%"),
+                listOf("(", ")"), listOf("*", "="),
+                listOf("✓", "~"), listOf("~", "•"),
+                listOf("•", "="), listOf("=", "#")
+            )
             digits.forEachIndexed { index, digit ->
-                val keyView = keyWithCornerSymbol(digit, legends[index]) { typeText(digit) }
+                val keyView = keyWithCornerSymbol(
+                    digit,
+                    cornerSymbols[index],
+                    longAction = { anchor -> showChoices(anchor, symbolChoices[index]) }
+                ) { typeText(digit) }
                 numberRow.addView(keyView, LinearLayout.LayoutParams(0, dp(44), 1f))
             }
             outer.addView(numberRow, LinearLayout.LayoutParams(-1, dp(44)))
@@ -416,21 +432,20 @@ class EasyKeyboardService : InputMethodService() {
             }
             if (index == 2) row.addView(key("Enter", true) { answerCurrentEditor() },
                 LinearLayout.LayoutParams(0, -1, 1.8f))
-            outer.addView(row, LinearLayout.LayoutParams(-1, (dp(61) * keyboardScale).toInt()))
+            outer.addView(row, LinearLayout.LayoutParams(-1, dp(61)))
         }
 
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
+            weightSum = 12.58f
         }
-        val screenWidthDp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
-        val numberKeyUnit = ((screenWidthDp - 4f) / 10f).coerceAtLeast(dp(18).toFloat())
-        val sameAsNumberKey = numberKeyUnit.toInt()
+        // Weighted widths fill the entire bottom row with no blank gaps or horizontal scrolling.
         fun addBottom(label: String, action: () -> Unit, corner: String? = null) {
             val buttonView = if (corner == null) key(label, true, action)
-                             else keyWithCornerSymbol(label, corner, action)
-            bottom.addView(buttonView, LinearLayout.LayoutParams(sameAsNumberKey, -1))
+                             else keyWithCornerSymbol(label, corner, action = action)
+            bottom.addView(buttonView, LinearLayout.LayoutParams(0, -1, 1f))
         }
         addBottom("123", {
             numberRowVisible = !numberRowVisible
@@ -452,36 +467,39 @@ class EasyKeyboardService : InputMethodService() {
             val arrow = if (corner == null) key(label, true) { sendArrow(code, selectMode) }
                         else keyWithCornerSymbol(label, corner) { sendArrow(code, selectMode) }
             enableRepeat(arrow) { sendArrow(code, selectMode) }
-            bottom.addView(arrow, LinearLayout.LayoutParams(sameAsNumberKey, -1))
+            bottom.addView(arrow, LinearLayout.LayoutParams(0, -1, 1f))
         }
         val space = key("Space", true) { typeText(" ") }
-        bottom.addView(space, LinearLayout.LayoutParams((numberKeyUnit * 2.4f).toInt(), -1))
+        bottom.addView(space, LinearLayout.LayoutParams(0, -1, 2.4f))
         addBottom(".", { typeText(".") }, ";")
         val circle = key("○", true) { typeText("○") }
-        bottom.addView(circle, LinearLayout.LayoutParams((sameAsNumberKey * 1.18f).toInt(), -1))
+        bottom.addView(circle, LinearLayout.LayoutParams(0, -1, 1.18f))
         addBottom("؟", { typeText("؟") }, "✓")
         addBottom("،", { typeText("،") })
 
-        val bottomScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            isFillViewport = true
-            addView(bottom, ViewGroup.LayoutParams(-2, -1))
-        }
-        outer.addView(bottomScroll, LinearLayout.LayoutParams(-1, (dp(58) * keyboardScale).toInt()))
-return outer
+        outer.addView(bottom, LinearLayout.LayoutParams(-1, (dp(58) * keyboardScale).toInt()))
+        return outer
     }
 
     private fun key(label: String, dark: Boolean, action: () -> Unit): Button =
-        Button(this).apply {
+        key(label, dark, true, action)
+
+    private fun key(
+        label: String,
+        dark: Boolean,
+        doubleLabel: Boolean,
+        action: () -> Unit
+    ): Button = Button(this).apply {
             text = label
              isAllCaps = false
-            textSize = when {
+            val baseTextSize = when {
                 label.length == 1 && (label[0].isLetterOrDigit() ||
-                    label[0] in "!@#$%^&*()-_=+[]{};:'\\\"/\\\\?|<>×✓©®™§¶•…‰°℃℉№₽€£¥¢₹₩÷≠≈≡≤≥±√∞∑∏∫π○●□■،؟؛٫٬") -> 45f
+                    label[0] in "!@#$%^&*()-_=+[]{};:'\"/\\?|<>×✓©®™§¶•…‰°℃℉№₽€£¥¢₹₩÷≠≈≡≤≥±√∞∑∏∫π○●□■،؟؛٫٬") -> 45f
                 label.length > 9 -> 10f
                 label.length > 5 -> 12f
                 else -> 15f
             }
+            textSize = if (doubleLabel && label.length > 1) baseTextSize * 2f else baseTextSize
             setTextColor(buttonTextColor)
             includeFontPadding = false
             typeface = Typeface.DEFAULT_BOLD
@@ -523,16 +541,22 @@ return outer
         popup.showAsDropDown(anchor, 0, -dp(56))
     }
 
-    private fun keyWithCornerSymbol(label: String, corner: String, action: () -> Unit): View {
+    private fun keyWithCornerSymbol(
+        label: String,
+        corner: String,
+        longAction: ((View) -> Unit)? = null,
+        action: () -> Unit
+    ): View {
         val box = FrameLayout(this)
         val main = key(label, true, action)
+        if (longAction != null) main.setOnLongClickListener { longAction(main); true }
         box.addView(main, FrameLayout.LayoutParams(-1, -1))
         val mark = TextView(this).apply {
             text = corner
             textSize = 8f
             setTextColor(buttonTextColor)
-            gravity = Gravity.TOP or Gravity.END
-            setPadding(0, dp(1), dp(2), 0)
+            gravity = Gravity.TOP or Gravity.LEFT
+            setPadding(dp(2), dp(1), 0, 0)
             isClickable = false
             isFocusable = false
         }
@@ -666,12 +690,24 @@ return outer
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("EasyKeys ranges", output))
         if (cut) {
+            var removedBefore = 0
+            val undoRanges = ranges.sortedBy { it.first }.map { range ->
+                val compacted = extracted.startOffset + range.first - removedBefore
+                removedBefore += range.second - range.first
+                RangeDeletion(
+                    originalStart = extracted.startOffset + range.first,
+                    compactedStart = compacted,
+                    text = range.third
+                )
+            }
             ranges.sortedByDescending { it.first }.forEach { range ->
                 val start = extracted.startOffset + range.first
                 val end = extracted.startOffset + range.second
                 connection.setSelection(start, end)
                 connection.commitText("", 1)
             }
+            undoStack.add(EditAction("", "", undoRanges))
+            redoStack.clear()
         }
         Toast.makeText(this, "Saved ${ranges.size} range(s): ${file.name}", Toast.LENGTH_LONG).show()
     }
@@ -698,6 +734,7 @@ return outer
             "Objects" to listOf("⌚","📱","💻","⌨️","🖥️","🖨️","📷","📹","📺","📻","🔋","💡","🔦","📚","✏️","🖊️","📌","📎","🔒","🔑","🔨","⚙️","🧰","🎁","📦"),
             "Hearts" to listOf("❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","♥️","♡","💌","💋","💍","✨"),
             "Travel" to listOf("🚗","🚕","🚌","🚎","🏎️","🚓","🚑","🚒","🚲","🛵","🏍️","✈️","🚀","🚢","⛵","🚆","🚇","🚉","🏠","🏢","🏰","🗼","🗽","⛺","🗺️"),
+            "Folders & Files" to listOf("📁","📂","🗂️","🗃️","🗄️","📄","📃","📑","🧾","📜","📋","📇","🗒️","🗓️","📅","📆","🗞️","📰","📓","📔","📒","📕","📗","📘","📙","📚","📖","🔖","📌","📍","✂️","🖇️","📎","🖊️","🖋️","✒️","🖌️","🖍️","📝"),
             "Asia Flags" to listOf("🇮🇷","🇨🇳","🇮🇳","🇯🇵","🇰🇷","🇸🇦","🇹🇷","🇵🇰","🇮🇩","🇹🇭","🇻🇳","🇲🇾","🇸🇬","🇦🇪","🇶🇦","🇮🇶","🇦🇫","🇧🇩","🇱🇰","🇳🇵"),
             "Europe Flags" to listOf("🇬🇧","🇫🇷","🇩🇪","🇮🇹","🇪🇸","🇵🇹","🇳🇱","🇧🇪","🇨🇭","🇦🇹","🇸🇪","🇳🇴","🇫🇮","🇩🇰","🇬🇷","🇵🇱","🇺🇦","🇷🇺","🇮🇪","🇨🇿"),
             "Africa Flags" to listOf("🇪🇬","🇿🇦","🇳🇬","🇰🇪","🇲🇦","🇩🇿","🇹🇳","🇬🇭","🇪🇹","🇹🇿","🇺🇬","🇸🇳","🇨🇮","🇨🇲","🇦🇴","🇸🇩","🇱🇾","🇿🇼","🇧🇼","🇷🇼"),
@@ -705,17 +742,44 @@ return outer
             "S. America Flags" to listOf("🇧🇷","🇦🇷","🇨🇱","🇨🇴","🇵🇪","🇻🇪","🇪🇨","🇺🇾","🇵🇾","🇧🇴","🇬🇾","🇸🇷"),
             "Oceania Flags" to listOf("🇦🇺","🇳🇿","🇫🇯","🇵🇬","🇼🇸","🇹🇴","🇻🇺","🇸🇧","🇰🇮","🇫🇲","🇵🇼","🇲🇭")
         )
+        // Keep each emoji category scrollable with at least 70 distinct entries.
+        val supplementalEmoji = listOf(
+            "🫠","🫢","🫣","🫡","🫥","🫤","🥹","🫶","🫰","🤌",
+            "🤏","🫳","🫴","🫱","🫲","🫸","🫷","🫵","🫦","🧏",
+            "🧑","👨","👩","🧒","👶","👵","👴","🧔","👮","👷",
+            "🧑‍⚕️","🧑‍🍳","🧑‍🎓","🧑‍🏫","🧑‍💻","🧑‍🔧","🧑‍🚀","🧑‍🎨","🧑‍🚒","🧑‍✈️",
+            "🐈‍⬛","🦬","🦣","🦫","🦥","🦦","🦨","🦡","🦤","🪿",
+            "🪼","🪸","🪷","🪻","🪴","🪹","🪺","🪵","🪨","🪬",
+            "🫧","🪩","🪅","🪆","🪇","🪈","🪉","🪏","🪙","🪪"
+        )
+        groups.keys.toList().forEach { name ->
+            groups[name] = (groups[name].orEmpty() + supplementalEmoji).distinct().take(70)
+        }
+        groups["Colored Shapes"] = listOf(
+            "🔴","🟠","🟡","🟢","🔵","🟣","🟤","⚫","⚪","🟥",
+            "🟧","🟨","🟩","🟦","🟪","🟫","⬛","⬜","🔶","🔷",
+            "🔸","🔹","🔺","🔻","💠","🔘","🔳","🔲","◼️","◻️",
+            "◾","◽","▪️","▫️","❤️","🧡","💛","💚","💙","💜",
+            "🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖",
+            "💘","💝","💟","♥️","♡","✨","⭐","🌟","☀️","🌙",
+            "☁️","⚡","🔥","💧","🌈","❄️","🌸","🌹","🌻","🍀"
+        ).distinct().take(70)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(6), dp(6), dp(6)) }
         val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val tabsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(tabs)
+        }
         val popup = PopupWindow(root, -1, dp(300), true).apply { isOutsideTouchable = true; elevation = dp(8).toFloat() }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val scroll = ScrollView(this).apply { addView(content) }
-        root.addView(tabs); root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(tabsScroll, LinearLayout.LayoutParams(-1, dp(42)))
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         fun render(items: List<String>) {
             content.removeAllViews()
             items.chunked(8).forEach { group ->
                 val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                group.forEach { emoji -> row.addView(key(emoji, false) { typeText(emoji); popup.dismiss() }, LinearLayout.LayoutParams(0, dp(42), 1f)) }
+                group.forEach { emoji -> row.addView(key(emoji, false, false) { typeText(emoji); popup.dismiss() }, LinearLayout.LayoutParams(0, dp(42), 1f)) }
                 content.addView(row)
             }
         }
@@ -762,7 +826,22 @@ return outer
         setInputView(buildKeyboard())
     }
 
-    private fun deleteOne() { currentInputConnection?.deleteSurroundingText(1, 0) }
+    private fun deleteOne() {
+        val connection = currentInputConnection ?: return
+        val selected = connection.getSelectedText(0)?.toString().orEmpty()
+        val removed = if (selected.isNotEmpty()) selected else {
+            val before = connection.getTextBeforeCursor(2, 0)?.toString().orEmpty()
+            if (before.isEmpty()) "" else {
+                val last = before.codePointBefore(before.length)
+                String(Character.toChars(last))
+            }
+        }
+        if (removed.isEmpty()) return
+        if (selected.isNotEmpty()) connection.commitText("", 1)
+        else connection.deleteSurroundingText(removed.length, 0)
+        undoStack.add(EditAction(removed, ""))
+        redoStack.clear()
+    }
 
     private fun answerCurrentEditor() {
         val connection = currentInputConnection ?: return
@@ -797,15 +876,47 @@ return outer
     }
 
     private fun typeText(text: String) {
-        currentInputConnection?.let { undoStack.add(text); redoStack.clear(); it.commitText(text, 1) }
+        val connection = currentInputConnection ?: return
+        val removed = connection.getSelectedText(0)?.toString().orEmpty()
+        connection.commitText(text, 1)
+        if (removed != text) {
+            undoStack.add(EditAction(removed, text))
+            redoStack.clear()
+        }
     }
+
     private fun undo() {
-        val last = undoStack.removeLastOrNull() ?: return
-        currentInputConnection?.deleteSurroundingText(last.length, 0); redoStack.add(last)
+        val connection = currentInputConnection ?: return
+        val action = undoStack.removeLastOrNull() ?: return
+        if (action.rangeDeletions.isNotEmpty()) {
+            action.rangeDeletions.sortedByDescending { it.compactedStart }.forEach { range ->
+                connection.setSelection(range.compactedStart, range.compactedStart)
+                connection.commitText(range.text, 1)
+            }
+        } else {
+            if (action.insertedText.isNotEmpty()) {
+                connection.deleteSurroundingText(action.insertedText.length, 0)
+            }
+            if (action.removedText.isNotEmpty()) connection.commitText(action.removedText, 1)
+        }
+        redoStack.add(action)
     }
+
     private fun redo() {
-        val last = redoStack.removeLastOrNull() ?: return
-        currentInputConnection?.commitText(last, 1); undoStack.add(last)
+        val connection = currentInputConnection ?: return
+        val action = redoStack.removeLastOrNull() ?: return
+        if (action.rangeDeletions.isNotEmpty()) {
+            action.rangeDeletions.sortedByDescending { it.originalStart }.forEach { range ->
+                connection.setSelection(range.originalStart, range.originalStart + range.text.length)
+                connection.commitText("", 1)
+            }
+        } else {
+            if (action.removedText.isNotEmpty()) {
+                connection.deleteSurroundingText(action.removedText.length, 0)
+            }
+            if (action.insertedText.isNotEmpty()) connection.commitText(action.insertedText, 1)
+        }
+        undoStack.add(action)
     }
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
