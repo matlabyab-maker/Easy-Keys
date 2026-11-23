@@ -102,6 +102,8 @@ class EasyKeyboardService : InputMethodService() {
     private val handler = Handler(Looper.getMainLooper())
     private val repeatTasks = mutableMapOf<View, Runnable>()
     private var keyboardScale = 1.0f
+    // Selected alternate characters remain on their base key until another alternate is chosen.
+    private val lockedLetterVariants = mutableMapOf<String, String>()
     private var buttonColor = Color.rgb(247, 249, 252)
     private var buttonTextColor = Color.rgb(25, 35, 75)
 
@@ -296,6 +298,7 @@ class EasyKeyboardService : InputMethodService() {
             outer.addView(mouseRow, LinearLayout.LayoutParams(-1, dp(40)))
         }
 
+
         if (numberRowVisible) {
             val numberRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                 val digits = if (persian) listOf("۱","۲","۳","۴","۵","۶","۷","۸","۹","۰")
@@ -389,8 +392,17 @@ class EasyKeyboardService : InputMethodService() {
             chars.forEach { ch ->
                 val shown = if (!symbolLayout && !persian && caps) ch.uppercase()
                             else if (!symbolLayout && !persian) ch.lowercase() else ch
-                val letterKey = key(shown, false) {
-                    typeText(shown)
+                val variants = if (!symbolLayout && persian) when (ch) {
+                    "ا" -> listOf("آ", "أ", "إ")
+                    "و" -> listOf("ؤ")
+                    "ی" -> listOf("ئ", "ي", "ى")
+                    else -> emptyList()
+                } else emptyList()
+                val baseLetter = ch
+                val lockedVariant = lockedLetterVariants[baseLetter]
+                val effectiveShown = lockedVariant ?: shown
+                val letterKey = key(effectiveShown, false) {
+                    typeText(lockedLetterVariants[baseLetter] ?: shown)
                     if (symbolLayout) {
                         symbolLayout = false
                         setInputView(buildKeyboard())
@@ -400,16 +412,10 @@ class EasyKeyboardService : InputMethodService() {
                         setInputView(buildKeyboard())
                     }
                 }
-                val variants = if (!symbolLayout && persian) when (ch) {
-                    "ا" -> listOf("آ", "أ", "إ")
-                    "و" -> listOf("ؤ")
-                    "ی" -> listOf("ئ", "ي", "ى")
-                    else -> emptyList()
-                } else emptyList()
                 if (variants.isNotEmpty()) {
                     letterKey.isLongClickable = true
                     letterKey.setOnLongClickListener {
-                        showChoices(letterKey, variants)
+                        showLetterVariants(letterKey, baseLetter, variants)
                         true
                     }
                 }
@@ -541,6 +547,35 @@ class EasyKeyboardService : InputMethodService() {
         showChoiceDialog("انتخاب", choices)
     }
 
+    /** Tap inserts a variant once; holding a variant inserts it and locks it onto its base key. */
+    private fun showLetterVariants(anchor: View, baseLetter: String, choices: List<String>) {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(12), dp(8), dp(12))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("حروف فرعیِ $baseLetter")
+            .setView(content)
+            .setNegativeButton("بستن", null)
+            .create()
+        choices.forEach { choice ->
+            val option = key(choice, false) { typeText(choice); dialog.dismiss() }
+            option.isLongClickable = true
+            option.setOnLongClickListener {
+                lockedLetterVariants[baseLetter] = choice
+                typeText(choice)
+                dialog.dismiss()
+                setInputView(buildKeyboard())
+                true
+            }
+            content.addView(option, LinearLayout.LayoutParams(0, dp(64), 1f).apply {
+                setMargins(dp(4), 0, dp(4), 0)
+            })
+        }
+        dialog.show()
+    }
+
     private fun showChoiceDialog(title: String, choices: List<String>) {
         AlertDialog.Builder(this)
             .setTitle(title)
@@ -562,7 +597,7 @@ class EasyKeyboardService : InputMethodService() {
         val main = key(label, true, action)
         if (longAction != null) main.setOnLongClickListener { longAction(main); true }
         box.addView(main, FrameLayout.LayoutParams(-1, -1))
-        val mark = TextView(this).apply {
+               val mark = TextView(this).apply {
             text = corner
             textSize = 8f
             setTextColor(buttonTextColor)
@@ -934,60 +969,4 @@ class EasyKeyboardService : InputMethodService() {
 
     private fun copySelection() {
         val selected = currentInputConnection?.getSelectedText(0)?.toString()
-        if (selected.isNullOrEmpty()) { Toast.makeText(this, "Select text first", Toast.LENGTH_SHORT).show(); return }
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Copied text", selected))
-    }
-
-    private fun pasteFromClipboard() {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val text = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
-        if (!text.isNullOrEmpty()) typeText(text)
-    }
-
-    private fun typeText(text: String) {
-        val connection = currentInputConnection ?: return
-        val removed = connection.getSelectedText(0)?.toString().orEmpty()
-        connection.commitText(text, 1)
-        if (removed != text) {
-            undoStack.add(EditAction(removed, text))
-            redoStack.clear()
-        }
-    }
-
-    private fun undo() {
-        val connection = currentInputConnection ?: return
-        val action = undoStack.removeLastOrNull() ?: return
-        if (action.rangeDeletions.isNotEmpty()) {
-            action.rangeDeletions.sortedByDescending { it.compactedStart }.forEach { range ->
-                connection.setSelection(range.compactedStart, range.compactedStart)
-                connection.commitText(range.text, 1)
-            }
-        } else {
-            if (action.insertedText.isNotEmpty()) {
-                connection.deleteSurroundingText(action.insertedText.length, 0)
-            }
-            if (action.removedText.isNotEmpty()) connection.commitText(action.removedText, 1)
-        }
-        redoStack.add(action)
-    }
-
-    private fun redo() {
-        val connection = currentInputConnection ?: return
-        val action = redoStack.removeLastOrNull() ?: return
-        if (action.rangeDeletions.isNotEmpty()) {
-            action.rangeDeletions.sortedByDescending { it.originalStart }.forEach { range ->
-                connection.setSelection(range.originalStart, range.originalStart + range.text.length)
-                connection.commitText("", 1)
-            }
-        } else {
-            if (action.removedText.isNotEmpty()) {
-                connection.deleteSurroundingText(action.removedText.length, 0)
-            }
-            if (action.insertedText.isNotEmpty()) connection.commitText(action.insertedText, 1)
-        }
-        undoStack.add(action)
-    }
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-}
-       
+        if (selected.isNullOrEmpty()) { Toas
