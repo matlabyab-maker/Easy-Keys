@@ -39,6 +39,59 @@ class EasyKeyboardService : InputMethodService() {
     private var layoutMode = "standard"
     private val undoStack = mutableListOf<String>()
     private val redoStack = mutableListOf<String>()
+    private val defaultSuggestionWords = listOf(
+        "آیا", "از", "اگر", "اما", "آن", "آنها", "این", "اینجا" ,
+        "اینجاها", "برای", "با", "بدون", "به", "بر", "بلکه", "بین" ,
+        "تا", "توی", "چون", "چرا", "چطور", "چند", "چه", "چیز" ,
+        "چیزی", "چگونه", "در", "درباره", "دوباره", "را", "زیرا", "زیر" ,
+        "سپس", "سمت", "شاید", "فقط", "که", "کدام", "کم", "کمتر" ,
+        "کنار", "کی", "گویا", "مگر", "مثل", "من", "میان", "نه" ,
+        "نیز", "و", "یا", "یک", "هم", "همان", "همه", "هر" ,
+        "بالا", "بالایی", "پایین", "پایینی", "پشت", "جلو", "چپ", "راست" ,
+        "وسط", "کناری", "ردیف", "ستون", "صفحه", "صفحهٔ", "اصلی", "داخلی" ,
+        "گوشه", "گوشه‌ها", "فاصله", "فضا", "خالی", "جای", "مکان", "اندازه" ,
+        "عرض", "ارتفاع", "طول", "شکل", "مربع", "دایره", "پنجره", "کادر" ,
+        "بخش", "قسمت", "نوار", "فهرست", "لیست", "خانه", "چیدمان", "ترتیب" ,
+        "چندگانه", "یکسان", "هم‌اندازه", "ثابت", "متحرک", "کشویی", "پهن", "دکمه" ,
+        "کلید", "کلیدها", "فشردن", "زدن", "لمس", "گرفتن", "نگه‌داشتن", "رهاکردن" ,
+        "انتخاب", "انتخابی", "گزینه", "گزینه‌ها", "فعال", "غیرفعال", "روشن", "خاموش" ,
+        "باز", "بسته", "بازکردن", "بستن", "افزودن", "اضافه", "حذف", "پاک‌کردن" ,
+        "ذخیره", "ذخیره‌کردن", "ارسال", "فرستادن", "بازگشت", "برگشت", "لغو", "تأیید" ,
+        "تغییر", "جابجایی", "حرکت", "کشیدن", "رها", "فشار", "ورودی", "خروجی" ,
+        "نوشتن", "خواندن", "واردکردن", "نمایش", "پنهان", "پنهان‌کردن", "متن", "کلمه" ,
+        "واژه", "عبارت", "جمله", "حرف", "حروف", "الفبا", "زبان", "فارسی" ,
+        "انگلیسی", "عدد", "اعداد", "شماره", "نشانه", "علامت", "علائم", "نماد" ,
+        "نمادها", "اعراب", "املا", "نوشتار", "نوشته", "تایپ", "صفحه‌کلید", "پیشنهاد" ,
+        "پیشنهادی", "پیشنهادها", "ویرایش", "ویرایشگر", "جست‌وجو", "پیدا", "یافتن", "جایگزین" ,
+        "تکرار", "یکتا", "تکراری", "فاصله‌گذاری", "نقطه", "ویرگول", "پرسش", "پرسشی" ,
+        "پاسخ", "رنگ", "رنگی", "سفید", "سیاه", "زرد", "آبی", "قرمز" ,
+        "قهوه‌ای", "تیره", "کم‌رنگ", "پررنگ", "بزرگ", "بزرگ‌تر", "کوچک", "کوچک‌تر" ,
+        "ضخیم", "نازک", "شفاف", "پس‌زمینه", "حاشیه", "قاب", "گوشه‌گرد", "فونت" ,
+        "قلم", "اندازهٔ‌قلم", "متناسب", "پروژه", "برنامه", "نرم‌افزار", "فایل", "پوشه" ,
+        "مسیر", "مخزن", "نسخه", "نسخه‌ها", "کد", "کدنویسی", "ساخت", "ساختن" ,
+        "اصلاح", "درست‌کردن", "رفع", "خطا", "اشکال", "مشکل", "آزمایش", "بررسی" ,
+        "اجرا", "نصب", "بارگیری", "دریافت", "دانلود", "فشرده", "نام", "عنوان" ,
+        "توضیح", "محتوا", "کامل", "ناقص", "تغییرات", "افزوده", "حذف‌شده", "نگهداری" ,
+        "انتقال", "ذخیره‌سازی", "فلش", "جهت", "لغزش", "پیمایش", "اسکرول", "چرخش" ,
+        "توقف", "شروع", "پایان", "مرحله", "گام", "همزمان", "مستقل", "خودکار" ,
+        "دستی", "پیوسته", "موقت", "قابل", "تصویر", "عکس", "عکس‌ها", "فیلم" ,
+        "ویدیو", "ویدئویی", "صدا", "صوت", "بلندی", "روشنایی", "نور", "تاریکی" ,
+        "برش", "فریم", "نما", "نمایشگر", "پخش", "پخش‌کردن", "ضبط", "رسانه" ,
+        "زیرنویس", "پیش‌نمایش", "زمان", "مدت", "اسلاید", "داستان‌نما", "دستگاه", "گوشی" ,
+        "اندروید", "رایانه", "حافظه", "ذخیره‌گاه", "اتصال", "قطع", "وصل", "شبکه" ,
+        "اینترنت", "نشانی", "سرور", "کشور", "عمومی", "خصوصی", "پاسخ‌گویی", "سرعت" ,
+        "کارکرد", "عملکرد", "دسترسی", "اجازه", "امنیت", "درایو", "فضای‌ذخیره‌سازی", "باشد" ,
+        "باشند", "بشود", "بشنود", "بده", "بگذار", "بیار", "بیاور", "بماند" ,
+        "بمانند", "بکند", "کن", "کند", "کنند", "کرد", "کردن", "کرده" ,
+        "می‌شود", "می‌شوند", "می‌آید", "می‌آیند", "می‌خواهد", "می‌خواهم", "می‌توان", "می‌توانی" ,
+        "می‌توانند", "می‌دهم", "می‌گیرد", "می‌ماند", "می‌مانند", "می‌نویسد", "می‌سازد", "می‌زند" ,
+        "می‌چرخد", "می‌کشد", "می‌افتد", "نکن", "نکند", "نشود", "نباشد", "نباشند" ,
+        "ندارد", "نداشته", "نیست", "هست", "هستند", "است", "شد", "شده" ,
+        "شود", "شوند", "دارم", "دارد", "دارند", "داشت", "داد", "داده" ,
+        "گذاشت", "گذاشته", "گرفته", "ساخته", "بزرگ‌ترکن", "کوچک‌کن", "اضافه‌کن", "حذف‌کن" ,
+        "ثابت‌کن", "فعال‌کن", "غیرفعال‌کن"
+    )
+
     private val handler = Handler(Looper.getMainLooper())
     private val repeatTasks = mutableMapOf<View, Runnable>()
     private var keyboardScale = 1.0f
@@ -68,14 +121,9 @@ class EasyKeyboardService : InputMethodService() {
         val stored = suggestionPrefs.getStringSet("items", emptySet())?.toList().orEmpty()
         val beforeCursor = currentInputConnection?.getTextBeforeCursor(80, 0)?.toString().orEmpty()
         val currentToken = beforeCursor.substringAfterLast(' ').substringAfterLast('\n')
-        val dictionary = listOf(
-            "نه", "بله", "چرا", "این", "در", "که", "زیرا", "و", "بلکه", "همه", "یک", "اینجا", "موارد",
-            "من", "تو", "ما", "شما", "آنها", "برای", "با", "از", "به", "اما", "اگر", "چون", "بسیار",
-            "سلام", "خوب", "ممنون", "لطفاً", "می‌شود", "هست", "نیست", "دارم", "دارید"
-        )
-        val dynamicDefaults = if (currentToken.isBlank()) emptyList()
-            else dictionary.filter { it.startsWith(currentToken) && it != currentToken }.take(6)
-        val saved = (dynamicDefaults + stored.filter { currentToken.isBlank() || it.startsWith(currentToken) }).distinct()
+        val suggestionPool = (defaultSuggestionWords + stored).distinct()
+        val saved = if (currentToken.isBlank()) suggestionPool
+            else suggestionPool.filter { it.startsWith(currentToken) && it != currentToken }
         val suggestionScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(suggestions)
@@ -104,7 +152,16 @@ class EasyKeyboardService : InputMethodService() {
                 hint = "${index + 1}: 5-12"
                 textSize = 11f
                 gravity = Gravity.CENTER
+                textDirection = View.TEXT_DIRECTION_LTR
                 setSingleLine(true)
+                isFocusable = true
+                isFocusableInTouchMode = true
+                isClickable = true
+                isEnabled = true
+                setSelectAllOnFocus(true)
+                setOnClickListener { requestFocus() }
+                showSoftInputOnFocus = true
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
                 inputType = InputType.TYPE_CLASS_TEXT
                 setPadding(dp(2), 0, dp(2), 0)
                 background = GradientDrawable().apply {
@@ -146,9 +203,7 @@ class EasyKeyboardService : InputMethodService() {
             // Match the width of a regular letter key in the third alphabet row.
             val letterKeyWidth = (screenWidthDp / if (persian) 13.15f else 10.15f).toInt()
             val width = when (label) {
-                // Save Suggestion needs a real text-button width; using an
-                // alphabet-key width forced the label to wrap vertically.
-                "Save Suggestion" -> dp(116)
+                "Save Suggestion" -> dp((screenWidthDp / if (persian) 13.15f else 10.15f).toInt())
                 "Setup" -> dp(62)
                 else -> dp(76)
             }
@@ -163,12 +218,12 @@ class EasyKeyboardService : InputMethodService() {
         actionRowScroll.addView(actionRow)
         outer.addView(actionRowScroll, LinearLayout.LayoutParams(-1, dp(48)))
 
-        val toolbarScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
+        // Second control row is fixed-width; it no longer scrolls horizontally.
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 11f
         }
-        val toolbar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val toolbarKeys = listOf("«", "»", "−", "_", "Undo", "Redo", "Past", "Copy", "Emoji", "اعراب", "File", "Answer")
-        val letterKeyWidth = dp(((resources.displayMetrics.widthPixels / resources.displayMetrics.density) / 11f).toInt())
+        val toolbarKeys = listOf("«", "»", "−", "_", "Undo", "Redo", "Past", "Copy", "Emoji", "File", "Answer")
         toolbarKeys.forEach { label ->
             val b = key(label, true) {
                 when (label) {
@@ -179,7 +234,6 @@ class EasyKeyboardService : InputMethodService() {
                     "Save Suggestion" -> saveSuggestion()
                     "Export List" -> exportSuggestions()
                     "Emoji" -> showGrid("Emoji", listOf("😀","😁","😂","🤣","😊","😍","😘","😎","😭","😡","👍","👎","👏","🙏","❤️","💙","🔥","🌹","🎉","✅","❌","⭐","☀️","🌙"), 6)
-                    "اعراب" -> showGrid("اعراب", listOf("َ","ِ","ُ","ً","ٍ","ٌ","ْ","ّ","ٰ","ٓ","ٔ","ٕ"), 6)
                     "File" -> {
                         val intent = android.content.Intent(this, FilePickerActivity::class.java)
                             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -197,15 +251,10 @@ class EasyKeyboardService : InputMethodService() {
             if (label == "_") b.setOnLongClickListener {
                 showChoices(b, listOf("_", "=")); true
             }
-            val toolbarWidth = when (label) {
-                "Emoji", "اعراب" -> letterKeyWidth
-                "Answer" -> dp(82)
-                else -> dp(if (label.length > 8) 92 else if (label.length > 4) 64 else 48)
-            }
-            toolbar.addView(b, LinearLayout.LayoutParams(toolbarWidth, -1))
+            b.textSize = if (label.length > 5) 9f else 11f
+            toolbar.addView(b, LinearLayout.LayoutParams(0, -1, 1f))
         }
-        toolbarScroll.addView(toolbar)
-        outer.addView(toolbarScroll, LinearLayout.LayoutParams(-1, dp(48)))
+        outer.addView(toolbar, LinearLayout.LayoutParams(-1, dp(48)))
 
         if (layoutMode == "computer") {
             val pcRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -338,10 +387,21 @@ class EasyKeyboardService : InputMethodService() {
                     "ی" -> listOf("ئ", "ي", "ى")
                     else -> emptyList()
                 } else emptyList()
-                if (variants.isNotEmpty()) letterKey.setOnLongClickListener {
-                    showChoices(letterKey, variants); true
+                if (variants.isNotEmpty()) {
+                    letterKey.isLongClickable = true
+                    letterKey.setOnLongClickListener {
+                        showChoices(letterKey, variants)
+                        true
+                    }
                 }
                 row.addView(letterKey, LinearLayout.LayoutParams(0, -1, 1f))
+                if (!symbolLayout && persian && index == 0 && ch == "ج") {
+                    val diacritics = key("اعراب", true) {
+                        showGrid("اعراب", listOf("َ","ِ","ُ","ً","ٍ","ٌ","ْ","ّ","ٰ","ٓ","ٔ","ٕ"), 6)
+                    }
+                    diacritics.textSize = 9f
+                    row.addView(diacritics, LinearLayout.LayoutParams(0, -1, 1.15f))
+                }
                 if (!symbolLayout && !persian && index == 2 && ch == "M") {
                     row.addView(key(",", true) { typeText(",") },
                         LinearLayout.LayoutParams(0, -1, 1f))
@@ -416,11 +476,14 @@ return outer
             text = label
              isAllCaps = false
             textSize = when {
+                label.length == 1 && (label[0].isLetterOrDigit() ||
+                    label[0] in "!@#$%^&*()-_=+[]{};:'\\\"/\\\\?|<>×✓©®™§¶•…‰°℃℉№₽€£¥¢₹₩÷≠≈≡≤≥±√∞∑∏∫π○●□■،؟؛٫٬") -> 45f
                 label.length > 9 -> 10f
                 label.length > 5 -> 12f
                 else -> 15f
             }
             setTextColor(buttonTextColor)
+            includeFontPadding = false
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             minWidth = 0
@@ -428,7 +491,13 @@ return outer
             setPadding(dp(2), 0, dp(2), 0)
             isSoundEffectsEnabled = false
             background = GradientDrawable().apply {
-                setColor(if (dark) Color.rgb(225, 230, 238) else buttonColor)
+                val keyFill = when {
+                    label == "Enter" -> Color.rgb(190, 220, 248)
+                    label == "← Backspace" || label == "Backspace" -> Color.rgb(248, 190, 190)
+                    label.length == 1 && label[0].isDigit() -> Color.rgb(220, 190, 150)
+                    else -> Color.rgb(250, 247, 235)
+                }
+                setColor(keyFill)
                 cornerRadius = dp(6).toFloat()
                 setStroke(dp(1), Color.rgb(160, 170, 185))
             }
@@ -451,8 +520,7 @@ return outer
                 popup.dismiss()
             }, LinearLayout.LayoutParams(dp(48), dp(50)))
         }
-        popup.showAtLocation(window.window?.decorView ?: anchor,
-            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, 0, dp(250))
+        popup.showAsDropDown(anchor, 0, -dp(56))
     }
 
     private fun keyWithCornerSymbol(label: String, corner: String, action: () -> Unit): View {
@@ -553,7 +621,12 @@ return outer
 
     private fun saveTextRanges(rangeTexts: List<String>, cut: Boolean) {
         val connection = currentInputConnection
-        val extracted = connection?.getExtractedText(ExtractedTextRequest(), 0)
+        val request = ExtractedTextRequest().apply {
+            token = 0
+            hintMaxChars = 100000
+            hintMaxLines = 10000
+        }
+        val extracted = connection?.getExtractedText(request, 0)
         val fullText = extracted?.text?.toString()
         if (connection == null || extracted == null || fullText == null) {
             Toast.makeText(this, "Cannot read editor text", Toast.LENGTH_SHORT).show()
@@ -565,7 +638,14 @@ return outer
         lines.forEachIndexed { i, line -> starts[i] = cursor; cursor += line.length + 1 }
         val ranges = mutableListOf<Triple<Int, Int, String>>()
         rangeTexts.forEach { raw ->
-            val match = Regex("^\\s*(\\d+)\\s*[-–—]\\s*(\\d+)\\s*$").matchEntire(raw)
+            val normalized = raw
+                .replace('۰', '0').replace('۱', '1').replace('۲', '2').replace('۳', '3')
+                .replace('۴', '4').replace('۵', '5').replace('۶', '6').replace('۷', '7')
+                .replace('۸', '8').replace('۹', '9')
+                .replace('٠', '0').replace('١', '1').replace('٢', '2').replace('٣', '3')
+                .replace('٤', '4').replace('٥', '5').replace('٦', '6').replace('٧', '7')
+                .replace('٨', '8').replace('٩', '9')
+            val match = Regex("^\\s*(\\d+)\\s*[-–—]\\s*(\\d+)\\s*$").matchEntire(normalized)
             if (match != null) {
                 val first = match.groupValues[1].toIntOrNull() ?: return@forEach
                 val last = match.groupValues[2].toIntOrNull() ?: return@forEach
@@ -656,7 +736,6 @@ return outer
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             group.forEach { item ->
                 val symbolButton = key(item, false) { typeText(item); popup.dismiss() }
-                enableRepeat(symbolButton) { typeText(item) }
                 row.addView(symbolButton, LinearLayout.LayoutParams(0, dp(44), 1f))
             }
             content.addView(row)
